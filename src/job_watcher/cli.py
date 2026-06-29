@@ -45,6 +45,27 @@ def main(argv: list[str] | None = None) -> int:
     crawl_parser.add_argument("--limit", type=int, default=20, help="Maximum sources to fetch.")
     crawl_parser.add_argument("--timeout", type=int, default=0, help="Temporary crawler timeout override in seconds.")
 
+    cleanup_parser = subparsers.add_parser(
+        "cleanup-weak-leads",
+        help="Mark leads without explicit 2027 campus recruitment evidence as invalid.",
+    )
+    cleanup_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+
+    gen_search_parser = subparsers.add_parser("generate-search-tasks", help="Generate active search monitoring tasks.")
+    gen_search_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    gen_search_parser.add_argument("--max-companies", type=int, default=80, help="Maximum known companies to include.")
+    gen_search_parser.add_argument("--providers", nargs="*", default=["baidu", "zhihu"], help="Search providers to use.")
+
+    run_search_parser = subparsers.add_parser("run-search-tasks", help="Run pending search monitoring tasks.")
+    run_search_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    run_search_parser.add_argument("--limit", type=int, default=20, help="Maximum tasks to run.")
+    run_search_parser.add_argument("--count", type=int, default=5, help="Results requested per task.")
+    run_search_parser.add_argument("--timeout", type=int, default=0, help="Temporary provider timeout override in seconds.")
+
+    classify_search_parser = subparsers.add_parser("classify-search-results", help="Classify search results into leads, sources, and candidates.")
+    classify_search_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    classify_search_parser.add_argument("--limit", type=int, default=200, help="Maximum search results to classify.")
+
     args = parser.parse_args(argv)
     if args.command == "config-check":
         return config_check(args.settings or None)
@@ -62,6 +83,14 @@ def main(argv: list[str] | None = None) -> int:
         return auto_confirm_sources(args.settings or None)
     if args.command == "crawl-once":
         return crawl_once(args.settings or None, args.limit, args.timeout or None)
+    if args.command == "cleanup-weak-leads":
+        return cleanup_weak_leads(args.settings or None)
+    if args.command == "generate-search-tasks":
+        return generate_search_tasks_cmd(args.settings or None, args.max_companies, tuple(args.providers))
+    if args.command == "run-search-tasks":
+        return run_search_tasks_cmd(args.settings or None, args.limit, args.count, args.timeout or None)
+    if args.command == "classify-search-results":
+        return classify_search_results_cmd(args.settings or None, args.limit)
     parser.error(f"Unknown command: {args.command}")
     return 2
 
@@ -199,6 +228,71 @@ def crawl_once(settings_path: str | None, limit: int, timeout: int | None) -> in
     print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
     print(f"database: {settings.paths.database_path}")
     print(f"snapshots: {settings.paths.snapshots_dir}")
+    return 0
+
+
+def cleanup_weak_leads(settings_path: str | None) -> int:
+    from job_watcher.storage.db import connect
+
+    settings = load_settings(settings_path)
+    with connect(settings) as conn:
+        cur = conn.execute(
+            """
+            UPDATE job_leads
+            SET status = 'invalid',
+                summary = COALESCE(summary, '') || char(10) ||
+                          'Auto-marked invalid: missing explicit 2027 campus recruitment evidence.',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('new', 'pending_review')
+              AND (
+                COALESCE(target_year, '') != '2027'
+                OR COALESCE(recruitment_type, '') != 'campus'
+              )
+            """
+        )
+        conn.commit()
+    print(json.dumps({"invalidated": cur.rowcount}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def generate_search_tasks_cmd(settings_path: str | None, max_companies: int, providers: tuple[str, ...]) -> int:
+    from job_watcher.search.tasks import generate_search_tasks
+    from job_watcher.storage.db import connect
+
+    settings = load_settings(settings_path)
+    with connect(settings) as conn:
+        result = generate_search_tasks(
+            conn,
+            settings,
+            providers=providers,
+            priority_scope=tuple(settings.priority_scope),
+            max_companies=max_companies,
+        )
+    print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+    return 0
+
+
+def run_search_tasks_cmd(settings_path: str | None, limit: int, count: int, timeout: int | None) -> int:
+    from job_watcher.search.runner import run_pending_search_tasks
+    from job_watcher.storage.db import connect
+
+    settings = load_settings(settings_path)
+    if timeout:
+        settings = replace(settings, crawler=replace(settings.crawler, timeout_seconds=timeout))
+    with connect(settings) as conn:
+        result = run_pending_search_tasks(conn, settings, limit=limit, count=count)
+    print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+    return 0
+
+
+def classify_search_results_cmd(settings_path: str | None, limit: int) -> int:
+    from job_watcher.search.classifier import classify_unprocessed_results
+    from job_watcher.storage.db import connect
+
+    settings = load_settings(settings_path)
+    with connect(settings) as conn:
+        result = classify_unprocessed_results(conn, limit=limit)
+    print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
     return 0
 
 

@@ -58,6 +58,12 @@ def route_get(handler: BaseHTTPRequestHandler, settings: Settings) -> None:
     if parsed.path == "/leads":
         render(handler, "招聘线索", render_leads(settings, params))
         return
+    if parsed.path == "/search-results":
+        render(handler, "搜索发现", render_search_results(settings, params))
+        return
+    if parsed.path == "/discovered-companies":
+        render(handler, "表外企业候选", render_discovered_companies(settings, params))
+        return
     if parsed.path == "/health":
         send_text(handler, "ok")
         return
@@ -428,6 +434,126 @@ def render_leads(settings: Settings, params: dict[str, list[str]]) -> str:
     return filters + summary(total, page) + table + pager("/leads", params, total, page)
 
 
+def render_search_results(settings: Settings, params: dict[str, list[str]]) -> str:
+    provider = first(params, "provider")
+    q = first(params, "q")
+    page = int(first(params, "page") or "1")
+    offset = (page - 1) * PAGE_SIZE
+
+    where = []
+    values: list[Any] = []
+    if provider:
+        where.append("sr.provider = ?")
+        values.append(provider)
+    if q:
+        where.append("(sr.title LIKE ? OR sr.url LIKE ? OR sr.snippet LIKE ? OR st.query LIKE ?)")
+        values.extend([f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"])
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    with connect(settings) as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM search_results sr LEFT JOIN search_tasks st ON st.id = sr.task_id{where_sql}",
+            values,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"""
+            SELECT sr.id, sr.provider, sr.rank, sr.title, sr.url, sr.snippet,
+                   st.query, st.reason, c.company_name, c.priority
+            FROM search_results sr
+            LEFT JOIN search_tasks st ON st.id = sr.task_id
+            LEFT JOIN companies c ON c.id = sr.company_id
+            {where_sql}
+            ORDER BY sr.created_at DESC, sr.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*values, PAGE_SIZE, offset],
+        ).fetchall()
+
+    filters = filter_bar(
+        "/search-results",
+        {"provider": provider, "q": q},
+        extra="<select name=\"provider\"><option value=\"\">全部 Provider</option>{}</select>".format(
+            options(["baidu", "zhihu", "bocha"], provider)
+        ),
+    )
+    table = table_html(
+        ["ID", "Provider", "任务", "优先级", "公司", "标题", "URL", "摘要"],
+        [
+            [
+                r["id"],
+                r["provider"],
+                html.escape(f"{r['reason'] or ''}: {r['query'] or ''}"),
+                r["priority"] or "-",
+                r["company_name"] or "表外/全局",
+                html.escape(r["title"] or ""),
+                link(r["url"]),
+                truncate(r["snippet"], 120),
+            ]
+            for r in rows
+        ],
+    )
+    return filters + summary(total, page) + table + pager("/search-results", params, total, page)
+
+
+def render_discovered_companies(settings: Settings, params: dict[str, list[str]]) -> str:
+    status = first(params, "status") or "pending"
+    q = first(params, "q")
+    page = int(first(params, "page") or "1")
+    offset = (page - 1) * PAGE_SIZE
+
+    where = []
+    values: list[Any] = []
+    if status:
+        where.append("review_status = ?")
+        values.append(status)
+    if q:
+        where.append("(company_name LIKE ? OR evidence_title LIKE ? OR evidence_snippet LIKE ?)")
+        values.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+
+    with connect(settings) as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM discovered_companies{where_sql}", values).fetchone()[0]
+        rows = conn.execute(
+            f"""
+            SELECT id, company_name, matched_location, matched_ownership,
+                   matched_direction, evidence_url, evidence_title, score,
+                   review_status, created_at
+            FROM discovered_companies
+            {where_sql}
+            ORDER BY score DESC, created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*values, PAGE_SIZE, offset],
+        ).fetchall()
+
+    filters = filter_bar(
+        "/discovered-companies",
+        {"status": status, "q": q},
+        extra="<select name=\"status\"><option value=\"\">全部状态</option>{}</select>".format(
+            options(["pending", "accepted", "ignored", "needs_more_search"], status)
+        ),
+    )
+    table = table_html(
+        ["ID", "候选企业", "分数", "区域", "性质", "方向", "证据标题", "URL", "状态", "发现时间"],
+        [
+            [
+                r["id"],
+                html.escape(r["company_name"] or ""),
+                r["score"],
+                html.escape(r["matched_location"] or ""),
+                html.escape(r["matched_ownership"] or ""),
+                html.escape(r["matched_direction"] or ""),
+                html.escape(r["evidence_title"] or ""),
+                link(r["evidence_url"]),
+                r["review_status"],
+                r["created_at"],
+            ]
+            for r in rows
+        ],
+    )
+    return filters + summary(total, page) + table + pager("/discovered-companies", params, total, page)
+
+
 def update_candidate(settings: Settings, form: dict[str, str]) -> None:
     candidate_id = int(form["candidate_id"])
     decision = form.get("decision", "")
@@ -612,6 +738,8 @@ def layout(title: str, body: str) -> str:
     <a href="/sources?status=verified_recruitment">已确认招聘</a>
     <a href="/candidates">修正候选</a>
     <a href="/leads">招聘线索</a>
+    <a href="/search-results">搜索发现</a>
+    <a href="/discovered-companies">表外企业</a>
     <a href="/health">Health</a>
   </nav>
   <main>

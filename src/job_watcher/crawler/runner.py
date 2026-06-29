@@ -13,7 +13,15 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from job_watcher.config import Settings
-from job_watcher.crawler.keywords import COMPUTER_KEYWORDS, RECRUITMENT_KEYWORDS, SECURITY_KEYWORDS, matched_keywords
+from job_watcher.crawler.keywords import (
+    CAMPUS_RECRUITMENT_KEYWORDS,
+    COMPUTER_KEYWORDS,
+    RECRUITMENT_CONTEXT_KEYWORDS,
+    RECRUITMENT_KEYWORDS,
+    SECURITY_KEYWORDS,
+    TARGET_2027_KEYWORDS,
+    matched_keywords,
+)
 
 
 TAG_RE = re.compile(r"<[^>]+>")
@@ -215,18 +223,33 @@ def maybe_insert_lead(
     fetched: dict[str, Any],
 ) -> bool:
     text = "\n".join([fetched["title"], fetched["text"]])
+    target_2027 = matched_keywords(text, TARGET_2027_KEYWORDS)
+    campus_recruitment = matched_keywords(text, CAMPUS_RECRUITMENT_KEYWORDS)
+    recruitment_context = matched_keywords(text, RECRUITMENT_CONTEXT_KEYWORDS)
     recruitment = matched_keywords(text, RECRUITMENT_KEYWORDS)
     security = matched_keywords(text, SECURITY_KEYWORDS)
     computer = matched_keywords(text, COMPUTER_KEYWORDS)
-    if not recruitment:
+
+    # A generic application portal is useful as a source, but it is not a
+    # 2027 campus recruitment lead until both year and campus-recruitment
+    # intent are present on the page.
+    if not target_2027 or not campus_recruitment:
         return False
 
-    target_year = "2027" if any("2027" in item or "27届" in item for item in recruitment) else ""
-    recruitment_type = "campus" if any(item in recruitment for item in ["校园招聘", "校招", "应届生", "秋招", "秋季招聘"]) else ""
+    target_year = "2027"
+    recruitment_type = "campus"
     computer_score = min(100, len(computer) * 12)
     security_score = min(100, len(security) * 18)
     trust_score = int(source["trust_level"] or 0)
-    overall_score = min(100, len(recruitment) * 10 + computer_score // 2 + security_score + trust_score // 5)
+    overall_score = min(
+        100,
+        len(target_2027) * 24
+        + len(campus_recruitment) * 16
+        + len(recruitment_context) * 4
+        + computer_score // 2
+        + security_score
+        + trust_score // 5,
+    )
     matched = sorted(set(recruitment + security + computer))
 
     cur = conn.execute(

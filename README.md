@@ -13,6 +13,7 @@
 - `docs/information_sources.md`：信息来源清单与接入策略
 - `docs/development.md`：主开发说明
 - `docs/vps_deployment.md`：VPS 部署记录和运维命令
+- `docs/search_monitoring.md`：主动搜索监控核心设计
 
 ## 本地配置检查
 
@@ -55,6 +56,8 @@ http://127.0.0.1:8000/coverage
 http://127.0.0.1:8000/sources
 http://127.0.0.1:8000/candidates
 http://127.0.0.1:8000/leads
+http://127.0.0.1:8000/search-results
+http://127.0.0.1:8000/discovered-companies
 ```
 
 命令行查看覆盖率：
@@ -95,6 +98,48 @@ python -m job_watcher.cli crawl-once --limit 20
 ```powershell
 python -m job_watcher.cli crawl-once --limit 5 --timeout 4
 ```
+
+清理弱线索：
+
+```powershell
+python -m job_watcher.cli cleanup-weak-leads
+```
+
+线索生成规则：
+
+- 招聘入口、网申系统、招聘官网保留在 `sources` 中。
+- `job_leads` 只保存明确 2027 届校园招聘公告/岗位线索。
+- 单独命中 `网申`、`投递`、`简历`、`截止时间` 不生成线索。
+
+## 主动搜索监控
+
+主动搜索是项目核心能力。企业表只决定优先级，不限制搜索范围。
+
+生成搜索任务：
+
+```powershell
+$env:PYTHONPATH="E:\job_watcher\src"
+python -m job_watcher.cli generate-search-tasks --max-companies 80 --providers baidu zhihu
+```
+
+运行搜索任务：
+
+```powershell
+python -m job_watcher.cli run-search-tasks --limit 20 --count 5 --timeout 20
+```
+
+分类搜索结果：
+
+```powershell
+python -m job_watcher.cli classify-search-results --limit 200
+```
+
+搜索结果分类：
+
+- 明确 2027 届 + 校园招聘 + 已知企业：进入 `job_leads`。
+- 明确 2027 届 + 青岛/山东 + 表外企业：进入 `discovered_companies` 和待复核。
+- 招聘入口/网申系统：进入 `sources` 或待复核，不当作招聘公告。
+- 旧届别或弱相关：标记为无效/忽略。
 
 当前本机验证结果：
 

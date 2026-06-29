@@ -88,6 +88,24 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS search_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        url TEXT NOT NULL,
+        tier TEXT,
+        source_kind TEXT,
+        scope TEXT,
+        access_method TEXT,
+        frequency TEXT,
+        trust_level INTEGER NOT NULL DEFAULT 60,
+        site_query_host TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS search_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id INTEGER REFERENCES search_tasks(id),
@@ -164,6 +182,26 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         UNIQUE(source_id, content_hash)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS discovered_companies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_name TEXT NOT NULL,
+        matched_location TEXT,
+        matched_ownership TEXT,
+        matched_direction TEXT,
+        first_result_id INTEGER REFERENCES search_results(id),
+        evidence_url TEXT,
+        evidence_title TEXT,
+        evidence_snippet TEXT,
+        score INTEGER NOT NULL DEFAULT 0,
+        review_status TEXT NOT NULL DEFAULT 'pending',
+        decision TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(company_name, evidence_url)
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_companies_priority ON companies(priority)",
     "CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(verification_status)",
     "CREATE INDEX IF NOT EXISTS idx_sources_company ON sources(company_id)",
@@ -172,6 +210,9 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_snapshots_source ON crawl_snapshots(source_id)",
     "CREATE INDEX IF NOT EXISTS idx_leads_status ON job_leads(status)",
     "CREATE INDEX IF NOT EXISTS idx_leads_company ON job_leads(company_id)",
+    "CREATE INDEX IF NOT EXISTS idx_search_tasks_status ON search_tasks(status)",
+    "CREATE INDEX IF NOT EXISTS idx_search_sources_tier ON search_sources(tier)",
+    "CREATE INDEX IF NOT EXISTS idx_discovered_companies_status ON discovered_companies(review_status)",
 )
 
 

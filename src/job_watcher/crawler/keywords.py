@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 
-RECRUITMENT_KEYWORDS = [
+TARGET_2027_KEYWORDS = [
     "2027届",
     "2027 届",
     "27届",
+    "2027年应届",
+    "2027毕业",
+]
+
+CAMPUS_RECRUITMENT_KEYWORDS = [
     "校园招聘",
     "秋招",
     "秋季招聘",
     "校招",
-    "网申",
     "应届生",
     "管培生",
     "招聘简章",
+]
+
+RECRUITMENT_CONTEXT_KEYWORDS = [
+    "网申",
     "宣讲会",
     "双选会",
     "笔试",
@@ -22,6 +30,8 @@ RECRUITMENT_KEYWORDS = [
     "简历",
     "截止时间",
 ]
+
+RECRUITMENT_KEYWORDS = TARGET_2027_KEYWORDS + CAMPUS_RECRUITMENT_KEYWORDS + RECRUITMENT_CONTEXT_KEYWORDS
 
 SECURITY_KEYWORDS = [
     "网络安全",
