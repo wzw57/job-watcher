@@ -1,0 +1,2 @@
+task_id,company_key,company_name,query,provider,rank,title,url,snippet
+1,example_key,示例公司,示例公司 招聘,bing,1,示例公司招聘官网,https://example.com/jobs,示例公司校园招聘与社会招聘入口

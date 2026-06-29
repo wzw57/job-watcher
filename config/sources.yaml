@@ -1,0 +1,135 @@
+sources:
+  - name: 国聘
+    url: https://www.iguopin.com/
+    source_type: public_platform
+    provider: iguopin
+    trust_level: 80
+    requires_browser: true
+    enabled: true
+    notes: 国企、央企、重点企业招聘聚合平台；第一版作为线索源和搜索补漏源。
+
+  - name: 国聘校园招聘
+    url: https://xiaoyuan.iguopin.com/
+    source_type: public_platform
+    provider: iguopin
+    trust_level: 82
+    requires_browser: true
+    enabled: true
+    notes: 国聘校招入口，重点关注 2027 届、青岛、山东、网络安全、信息技术关键词。
+
+  - name: 国资央企招聘平台
+    url: https://cujiuye.iguopin.com/
+    source_type: public_platform
+    provider: iguopin
+    trust_level: 85
+    requires_browser: true
+    enabled: true
+    notes: 国资央企促就业相关平台，适合发现央企专题和岗位。
+
+  - name: 青岛市人力资源和社会保障局
+    url: https://hrss.qingdao.gov.cn/
+    source_type: government
+    provider: qingdao_hrss
+    trust_level: 90
+    requires_browser: false
+    enabled: true
+    notes: 青岛人社官方入口，重点发现就业创业、招聘公告、人才服务相关栏目。
+
+  - name: 青岛政务网就业招聘栏目
+    url: https://www.qingdao.gov.cn/zfwf/zdlyzl/jiuyefw/jyaz/jyzp/
+    source_type: government
+    provider: qingdao_gov
+    trust_level: 90
+    requires_browser: false
+    enabled: true
+    notes: 青岛政务网就业招聘栏目，含国有企业岗位等公共信息。
+
+  - name: 青岛人才网
+    url: https://rc.qingdao.gov.cn/
+    source_type: government
+    provider: qingdao_talent
+    trust_level: 88
+    requires_browser: false
+    enabled: true
+    notes: 青岛人才服务入口，可能包含人才活动、招聘会和岗位信息。
+
+  - name: 即墨政务网国企招聘
+    url: https://www.jimo.gov.cn/zwzt/jycy/zpxx/yqzp/
+    source_type: government
+    provider: jimo_gov
+    trust_level: 86
+    requires_browser: false
+    enabled: true
+    notes: 即墨区属国企招聘栏目。
+
+  - name: 西海岸新区政务网
+    url: https://www.xihaian.gov.cn/
+    source_type: government
+    provider: xihaian_gov
+    trust_level: 84
+    requires_browser: false
+    enabled: true
+    notes: 西海岸新区招聘、引才、考试公告入口；后续需要定位具体栏目。
+
+  - name: 中国海洋大学就业中心
+    url: https://career.ouc.edu.cn/
+    source_type: campus
+    provider: ouc_career
+    trust_level: 74
+    requires_browser: false
+    enabled: true
+    notes: 青岛重点高校就业源，适合作为招聘线索来源。
+
+  - name: 中国石油大学（华东）学生就业信息网
+    url: https://career.upc.edu.cn/
+    source_type: campus
+    provider: upc_career
+    trust_level: 74
+    requires_browser: false
+    enabled: true
+    notes: 青岛/黄岛重要高校就业源。
+
+  - name: 山东大学就业网
+    url: https://www.job.sdu.edu.cn/
+    source_type: campus
+    provider: sdu_career
+    trust_level: 72
+    requires_browser: false
+    enabled: true
+    notes: 山东重点高校就业源，央企和国企转载较多。
+
+  - name: 青岛大学学生就业中心
+    url: https://job.qdu.edu.cn/
+    source_type: campus
+    provider: qdu_career
+    trust_level: 72
+    requires_browser: false
+    enabled: true
+    notes: 青岛本地高校就业源。
+
+  - name: 应届生求职网青岛频道
+    url: https://www.yingjiesheng.com/qingdaojob/index.html
+    source_type: commercial_platform
+    provider: yingjiesheng
+    trust_level: 55
+    requires_browser: false
+    enabled: true
+    notes: 聚合线索源，只作为 pending_review 候选。
+
+  - name: 高校人才网青岛国企
+    url: https://www.gaoxiaojob.com/rczhaopin/qingdao/guoqi_benke
+    source_type: commercial_platform
+    provider: gaoxiaojob
+    trust_level: 58
+    requires_browser: false
+    enabled: true
+    notes: 青岛国企公告聚合源，只作为线索源。
+
+  - name: 编制啦青岛国企
+    url: https://www.bianzhia.com/zt/gqqingdao/
+    source_type: commercial_platform
+    provider: bianzhia
+    trust_level: 55
+    requires_browser: false
+    enabled: true
+    notes: 青岛国企公告聚合源，只作为线索源。

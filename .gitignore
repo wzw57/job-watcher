@@ -1,0 +1,18 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+*.xlsx
+*.xls
+
+data/*.db
+data/*.sqlite
+data/audit/
+data/processed/
+data/snapshots/
+
+# Contains API-derived or manually curated search output; may include private notes.
+data/manual_search_results.csv

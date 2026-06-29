@@ -1,0 +1,42 @@
+app:
+  name: qingdao-job-watcher
+  timezone: Asia/Shanghai
+  environment: local
+
+paths:
+  data_dir: data
+  database_path: data/job_watcher.db
+  snapshots_dir: data/snapshots
+
+database:
+  url: sqlite:///data/job_watcher.db
+
+monitor:
+  default_priority_scope:
+    - P0
+    - P1
+
+crawler:
+  user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36
+  timeout_seconds: 20
+  max_concurrency: 3
+  snapshot_enabled: true
+
+search:
+  default_count: 5
+  providers:
+    zhihu:
+      enabled: true
+    baidu:
+      enabled: true
+    bocha:
+      enabled: false
+
+web:
+  host: 127.0.0.1
+  port: 8000
+  debug: true
+
+feishu:
+  enabled: false
+
