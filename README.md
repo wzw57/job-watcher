@@ -12,6 +12,7 @@
 - `docs/data_verification.md`：企业数据核实与修正规则
 - `docs/information_sources.md`：信息来源清单与接入策略
 - `docs/development.md`：主开发说明
+- `docs/vps_deployment.md`：VPS 部署记录和运维命令
 
 ## 本地配置检查
 
