@@ -22,6 +22,14 @@ def main(argv: list[str] | None = None) -> int:
 
     import_parser = subparsers.add_parser("import-seed", help="Import cleaned seed data into SQLite.")
     import_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    import_parser.add_argument("--seed-dir", default="", help="Directory containing seed CSVs and manifest.")
+
+    doctor_parser = subparsers.add_parser("seed-data-doctor", help="Validate seed files, row counts, keys, and SHA-256.")
+    doctor_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    doctor_parser.add_argument("--seed-dir", default="", help="Directory containing seed CSVs and manifest.")
+
+    migrate_parser = subparsers.add_parser("migrate-legacy-leads", help="Migrate legacy snapshots and leads into the V1 evidence chain.")
+    migrate_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
 
     candidate_parser = subparsers.add_parser("import-candidates", help="Import correction candidates into SQLite.")
     candidate_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
@@ -44,6 +52,24 @@ def main(argv: list[str] | None = None) -> int:
     crawl_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
     crawl_parser.add_argument("--limit", type=int, default=20, help="Maximum sources to fetch.")
     crawl_parser.add_argument("--timeout", type=int, default=0, help="Temporary crawler timeout override in seconds.")
+
+    collect_url_parser = subparsers.add_parser("collect-url", help="Diagnose one URL without writing to the database.")
+    collect_url_parser.add_argument("url", help="Public HTTP(S) URL to collect.")
+    collect_url_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    collect_url_parser.add_argument("--browser", action="store_true", help="Enable Playwright fallback for this check.")
+
+    sample_parser = subparsers.add_parser(
+        "validate-collector-samples",
+        help="Run the read-only collector acceptance pool and print a JSON report.",
+    )
+    sample_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    sample_parser.add_argument("--samples", default="", help="Optional collector sample CSV path.")
+    sample_parser.add_argument("--limit", type=int, default=0, help="Maximum samples; zero means all.")
+    sample_parser.add_argument("--category", default="", help="Only run one sample category.")
+    sample_parser.add_argument("--timeout", type=int, default=0, help="Temporary timeout override in seconds.")
+    sample_parser.add_argument("--browser", action="store_true", help="Enable Playwright fallback.")
+    sample_parser.add_argument("--output", default="", help="Optional JSON report output path.")
+    sample_parser.add_argument("--strict", action="store_true", help="Exit non-zero when a status is unexpected.")
 
     cleanup_parser = subparsers.add_parser(
         "cleanup-weak-leads",
@@ -72,7 +98,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "db-init":
         return db_init(args.settings or None)
     if args.command == "import-seed":
-        return import_seed(args.settings or None)
+        return import_seed(args.settings or None, args.seed_dir or None)
+    if args.command == "seed-data-doctor":
+        return seed_data_doctor(args.settings or None, args.seed_dir or None)
+    if args.command == "migrate-legacy-leads":
+        return migrate_legacy_leads(args.settings or None)
     if args.command == "import-candidates":
         return import_candidates(args.settings or None)
     if args.command == "web":
@@ -83,6 +113,13 @@ def main(argv: list[str] | None = None) -> int:
         return auto_confirm_sources(args.settings or None)
     if args.command == "crawl-once":
         return crawl_once(args.settings or None, args.limit, args.timeout or None)
+    if args.command == "collect-url":
+        return collect_url(args.url, args.settings or None, args.browser)
+    if args.command == "validate-collector-samples":
+        return validate_collector_samples_cmd(
+            args.settings or None, args.samples or None, args.limit, args.category,
+            args.timeout or None, args.browser, args.output or None, args.strict,
+        )
     if args.command == "cleanup-weak-leads":
         return cleanup_weak_leads(args.settings or None)
     if args.command == "generate-search-tasks":
@@ -137,13 +174,43 @@ def db_init(settings_path: str | None) -> int:
     return 0
 
 
-def import_seed(settings_path: str | None) -> int:
+def import_seed(settings_path: str | None, seed_dir: str | None = None) -> int:
     from job_watcher.importers.seed_importer import import_all_seed_data
 
     settings = load_settings(settings_path)
-    result = import_all_seed_data(settings)
+    result = import_all_seed_data(settings, Path(seed_dir) if seed_dir else None)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"database: {settings.paths.database_path}")
+    return 0
+
+
+def seed_data_doctor(settings_path: str | None, seed_dir: str | None = None) -> int:
+    from job_watcher.importers.seed_data import validate_seed_data
+
+    settings = load_settings(settings_path)
+    directory = Path(seed_dir) if seed_dir else settings.paths.data_dir / "processed"
+    result = validate_seed_data(directory)
+    print(json.dumps({
+        "seed_dir": str(result.seed_dir), "companies": result.company_count,
+        "sources": result.source_count, "manifest_version": result.manifest_version,
+        "sha256": result.sha256,
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def migrate_legacy_leads(settings_path: str | None) -> int:
+    from job_watcher.storage.db import connect, init_db
+    from job_watcher.storage.legacy_migration import migrate_legacy_data
+
+    settings = load_settings(settings_path)
+    init_db(settings)
+    with connect(settings) as conn:
+        before = {name: conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0] for name in ("companies", "sources")}
+        result = migrate_legacy_data(conn)
+        after = {name: conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0] for name in ("companies", "sources")}
+    if any(after[k] < before[k] for k in before):
+        raise RuntimeError(f"legacy migration reduced seed data counts: before={before}, after={after}")
+    print(json.dumps({**result, "before": before, "after": after}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -229,6 +296,62 @@ def crawl_once(settings_path: str | None, limit: int, timeout: int | None) -> in
     print(f"database: {settings.paths.database_path}")
     print(f"snapshots: {settings.paths.snapshots_dir}")
     return 0
+
+
+def collect_url(url: str, settings_path: str | None, browser: bool) -> int:
+    from job_watcher.collectors import build_collector
+
+    settings = load_settings(settings_path)
+    if browser:
+        settings = replace(settings, crawler=replace(settings.crawler, browser_fallback_enabled=True))
+    result = build_collector(settings).collect(url)
+    print(json.dumps({
+        "status": result.status, "requested_url": result.requested_url, "final_url": result.final_url,
+        "http_status": result.http_status, "content_type": result.content_type, "title": result.title,
+        "text_chars": len(result.text), "content_hash": result.content_hash,
+        "attachments": list(result.attachments), "error_type": result.error_type,
+        "error_message": result.error_message, "metadata": dict(result.metadata),
+    }, ensure_ascii=False, indent=2))
+    return 0 if result.succeeded else 1
+
+
+def validate_collector_samples_cmd(
+    settings_path: str | None,
+    samples_path: str | None,
+    limit: int,
+    category: str,
+    timeout: int | None,
+    browser: bool,
+    output_path: str | None,
+    strict: bool,
+) -> int:
+    from job_watcher.collectors import build_collector
+    from job_watcher.verification.collector_samples import (
+        load_collector_samples,
+        validate_collector_samples,
+        write_validation_report,
+    )
+
+    settings = load_settings(settings_path)
+    settings = replace(
+        settings,
+        crawler=replace(
+            settings.crawler,
+            timeout_seconds=timeout or settings.crawler.timeout_seconds,
+            retry_attempts=1 if timeout else settings.crawler.retry_attempts,
+            browser_fallback_enabled=browser or settings.crawler.browser_fallback_enabled,
+        ),
+    )
+    sample_file = Path(samples_path) if samples_path else settings.root_dir / "config" / "collector_samples.csv"
+    report = validate_collector_samples(
+        build_collector(settings), load_collector_samples(sample_file), limit=limit, category=category,
+        max_workers=settings.crawler.max_concurrency,
+    )
+    if output_path:
+        write_validation_report(report, Path(output_path))
+        report["output"] = str(Path(output_path))
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 1 if strict and int(report["unexpected"]) else 0
 
 
 def cleanup_weak_leads(settings_path: str | None) -> int:

@@ -12,7 +12,7 @@
 - 人工确认是可信来源进入监控的关键步骤。
 - 大模型只作为可选辅助，不参与主流程稳定性。
 
-## 2. 总体架构
+## 2. 总体架构（当前 V1）
 
 ```text
 青岛国企.xlsx
@@ -39,26 +39,26 @@
   -> build_review_sheet.py
   -> source_review_sheet.csv
 
-数据库
-  -> companies
-  -> sources
-  -> source_verifications
-  -> search_tasks
-  -> search_results
-  -> correction_candidates
-  -> verified_sources
+可信来源 / 搜索 / 人工导入
+  -> Collector
+  -> source_runs
+  -> raw_items + 原始附件
+  -> 招聘分类与字段提取
+  -> 企业识别
+  -> 候选事件检索与保守归并
+  -> job_events + job_positions
+  -> applications + review_tasks
 
 Web 看板
-  -> 企业库
-  -> 来源管理
-  -> 修正候选
-  -> 已确认来源
+  -> 今日雷达
+  -> 招聘事件与全部证据来源
+  -> 企业和来源管理
+  -> 覆盖中心
+  -> 投递进度与人工核验
 
 后续
-  -> 监控抓取
-  -> 招聘线索
-  -> 飞书推送
-  -> 邮箱/日程
+  -> 每日简报 / 飞书
+  -> 邮箱 / 日程
 ```
 
 ## 3. 模块划分
@@ -138,6 +138,20 @@ Provider：
 
 - SQLite
 
+核心事实表（V1 数据底座）：
+
+- `companies`：企业、事业单位、分支机构及集团层级。
+- `sources`：官网、公众号、公共平台、社区和搜索引擎渠道。
+- `search_tasks`：主动搜索与新主体/新渠道发现任务。
+- `raw_items`：逐来源保存的原始采集证据。
+- `job_events`：多来源归并后的招聘事件。
+- `job_positions`：招聘事件中的具体岗位。
+- `applications`：个人投递流程。
+- `review_tasks`：所有无法自动确认的问题。
+
+旧表 `crawl_snapshots`、`job_leads` 和 `correction_candidates` 在迁移期保留，
+后续通过归并任务逐步写入新的事实表，不进行破坏性删除。
+
 后续可迁移：
 
 - PostgreSQL
@@ -146,22 +160,22 @@ Provider：
 
 负责 Web 看板。
 
-第一版技术：
+当前看板使用 Python 标准库 HTTP 服务和服务端 HTML，默认只绑定本机地址；阶段 C 继续复用
+现有页面完成证据和归并状态展示。数据链路稳定后再迁移 FastAPI/Jinja2，不引入复杂前端框架。
 
-- FastAPI
-- Jinja2
-- 简单 CSS
-- 少量表单提交
+### 3.7 collectors 与 crawler
 
-不引入复杂前端框架。
+负责可信来源抓取、正文与附件解析、证据保存和运行状态记录。
 
-### 3.7 crawler，后续阶段
+当前已实现统一 HTTP/可选浏览器采集契约、失败分类、附件解析、质量评分、二进制证据保存和
+22 个真实站点固定验收池。采集层只生成 `raw_items`，不直接制造不可追溯的招聘事实。
 
-负责可信来源的定时抓取、快照保存、招聘线索生成。
+### 3.8 recruitment processing（当前阶段）
 
-第一版只预留表结构，不实现复杂抓取。
+负责把合格 `raw_items` 转换为 `job_events` 和 `job_positions`，包含招聘分类、字段提取、
+企业匹配、保守去重、个人匹配和人工核验。详细契约见 `stage_c_implementation_plan.md`。
 
-### 3.8 notify，后续阶段
+### 3.9 notify，后续阶段
 
 负责飞书推送。
 
@@ -217,18 +231,23 @@ query
 
 搜索结果只作为候选。
 
-### 4.4 后续监控数据流
+### 4.4 监控与招聘事件数据流
 
 ```text
-verified source
-  -> crawler
-  -> snapshot
-  -> content hash
-  -> keyword scoring
-  -> job_lead
-  -> review/confirm
-  -> job_post
+verified source / search clue / manual import
+  -> collector
+  -> raw_items
+  -> content quality gate
+  -> recruitment parser
+  -> entity matching
+  -> deduplication or review_tasks
+  -> job_events + job_positions
+  -> personal matching
+  -> radar / applications / briefs
 ```
+
+原则：旧 `crawl_snapshots` 和 `job_leads` 仅用于兼容迁移；所有新增招聘事实必须从
+`raw_items` 建立证据关联，不得直接写入旧线索模型后再反向补证据。
 
 ## 5. 数据库设计草案
 
@@ -505,4 +524,3 @@ VPS 约束：
 - 飞书推送。
 - 邮箱/日程。
 - 大模型助手。
-

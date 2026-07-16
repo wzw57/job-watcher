@@ -1,0 +1,45 @@
+{
+  "bundle_version": "qingdao-soe-seed-v1",
+  "generated_at_utc": "2026-07-16T02:30:05.284891+00:00",
+  "canonical_source": {
+    "file": "青岛国企广义主体库_归属集团去重修复版.xlsx",
+    "sha256": "3eddcc6c1472199032cb01e6a6ba69851b485b89bc6c699f92ef6ab3a2b5b6ca",
+    "sheet": "主体公司"
+  },
+  "public_release_policy": "Public company facts and URLs only; original free-form URL notes and screening sheets excluded.",
+  "counts": {
+    "companies": 500,
+    "sources": 690,
+    "enabled_companies": 215,
+    "companies_without_urls": 0,
+    "duplicate_normalized_name_groups": 0
+  },
+  "priority_counts": {
+    "P0": 85,
+    "P1": 130,
+    "P2": 143,
+    "P3": 123,
+    "P4": 19
+  },
+  "source_type_counts": {
+    "commercial_platform": 22,
+    "government": 48,
+    "official_or_unknown": 527,
+    "official_recruitment": 81,
+    "public_platform": 12
+  },
+  "files": {
+    "companies_seed.csv": {
+      "sha256": "290ed38cfeebe8a04bf7067c96393d56cdf4d0b7939b278fc890a9dbb3535179",
+      "bytes": 228944
+    },
+    "company_sources_seed.csv": {
+      "sha256": "b516ae949a18753ba2d1464021b41813071e4b6c752d478e1aae4d3a02fbb32c",
+      "bytes": 138021
+    },
+    "seed_quality_issues.csv": {
+      "sha256": "74254f94ac2e5aabf6333e8c249c5b4a22daa796e0351f5f36d249f514852aca",
+      "bytes": 84
+    }
+  }
+}

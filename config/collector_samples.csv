@@ -1,0 +1,23 @@
+sample_key,name,url,category,expected_statuses,enabled,notes
+qingdao_hrss,青岛市人力资源和社会保障局,https://hrss.qingdao.gov.cn/,government,success|http_error|network_error,true,青岛就业官方入口
+qingdao_gov_jobs,青岛政务网就业招聘栏目,https://www.qingdao.gov.cn/zfwf/zdlyzl/jiuyefw/jyaz/jyzp/,government,success|http_error|network_error,true,青岛国企与公共招聘公告
+qingdao_talent,青岛人才网,https://rc.qingdao.gov.cn/,government,success|needs_browser|http_error|network_error,true,青岛人才服务入口
+jimo_jobs,即墨政务网国企招聘,https://www.jimo.gov.cn/zwzt/jycy/zpxx/yqzp/,government,success|http_error|network_error,true,区属国企招聘栏目
+xihaian_gov,西海岸新区政务网,https://www.xihaian.gov.cn/,government,success|http_error|network_error,true,新区招聘与引才入口
+ouc_career,中国海洋大学就业中心,https://career.ouc.edu.cn/,campus,success|needs_browser|blocked|http_error|network_error,true,青岛高校就业源
+upc_career,中国石油大学华东就业网,https://career.upc.edu.cn/,campus,success|needs_browser|blocked|http_error|network_error,true,青岛高校就业源
+sdu_career,山东大学就业网,https://www.job.sdu.edu.cn/,campus,success|needs_browser|blocked|http_error|network_error,true,山东高校就业源
+qdu_career,青岛大学学生就业中心,https://job.qdu.edu.cn/,campus,success|needs_browser|blocked|http_error|network_error,true,青岛高校就业源
+iguopin,国聘,https://www.iguopin.com/,platform,success|needs_browser|blocked,true,动态国企招聘平台
+iguopin_campus,国聘校园招聘,https://xiaoyuan.iguopin.com/,platform,success|needs_browser|blocked,true,动态校招平台
+iguopin_state_assets,国资央企招聘平台,https://cujiuye.iguopin.com/,platform,success|needs_browser|blocked,true,动态央企招聘平台
+yingjiesheng_qingdao,应届生求职网青岛频道,https://www.yingjiesheng.com/qingdaojob/index.html,aggregator,success|needs_browser|blocked|http_error,true,商业聚合线索
+gaoxiaojob_qingdao,高校人才网青岛国企,https://www.gaoxiaojob.com/rczhaopin/qingdao/guoqi_benke,aggregator,success|needs_browser|blocked|http_error,true,商业聚合线索
+bianzhia_qingdao,编制啦青岛国企,https://www.bianzhia.com/zt/gqqingdao/,aggregator,success|needs_browser|blocked|http_error,true,商业聚合线索
+ccic_shandong,中国检验认证集团山东有限公司,https://sd.ccic.com/,company,success|needs_browser|http_error|network_error,true,央企在青分支官网
+crrc_sfs,中车四方所,https://www.crrcgc.cc/sfs/142_8690/142_8700/index.html,company,success|needs_browser|blocked|http_error|network_error,true,央企在青官网
+crrc_sfs_jobs,中车四方所招聘,https://crrc-sfs.hotjob.cn/,recruitment,success|needs_browser|blocked|http_error|network_error,true,第三方招聘 SaaS
+crrc_sfgf,中车四方股份,https://www.crrcgc.cc/sfgf/,company,success|needs_browser|blocked|http_error|network_error,true,央企在青官网
+china_railway_jobs,中国铁路人才招聘网,https://rczp.china-railway.com.cn/,recruitment,success|needs_browser|blocked|http_error|network_error,true,央企固定招聘入口
+chinatelecom_jobs,中国电信招聘,https://www.chinatelecom.com.cn/zp/,recruitment,success|needs_browser|blocked|http_error|network_error,true,央企固定招聘入口
+nra_recruitment_pdf,国家铁路局公开招聘 PDF,https://www.nra.gov.cn/xxgk/gkml/jgfl/rss/202512/P020251226531120871472.pdf,document,success|http_error|network_error,true,固定文本型 PDF 样本

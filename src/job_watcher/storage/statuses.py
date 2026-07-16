@@ -1,0 +1,11 @@
+COMPANY_STATUSES = ("candidate", "verified", "inactive", "ignored")
+SOURCE_STATUSES = ("candidate", "verified_official", "verified_recruitment", "invalid", "inactive")
+RAW_ITEM_STATUSES = ("pending", "success", "failed", "blocked")
+JOB_EVENT_STATUSES = ("pending_review", "open", "closing_soon", "closed", "invalid")
+MATCH_LEVELS = ("strong", "worth_reviewing", "possible", "pending", "mismatch")
+QINGDAO_LEVELS = ("confirmed", "possible", "shandong", "national", "pending", "outside")
+APPLICATION_STATUSES = ("undecided", "preparing", "applied", "written_test", "interview", "waiting", "offer", "rejected", "abandoned")
+REVIEW_STATUSES = ("pending", "in_progress", "resolved", "ignored")
+PRIORITIES = ("S", "A", "B", "C")
+
+LEGACY_SKIPPED_LEAD_STATUSES = frozenset({"ignored", "duplicate", "invalid", "expired"})

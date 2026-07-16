@@ -11,13 +11,14 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from job_watcher.config import Settings, load_settings
 from job_watcher.reporting.coverage import companies_needing_sources, coverage_by_priority, coverage_summary
-from job_watcher.storage.db import connect
+from job_watcher.storage.db import connect, init_db
 
 
 PAGE_SIZE = 50
 
 
 def run_server(settings: Settings) -> None:
+    init_db(settings)
     server = ThreadingHTTPServer((settings.web.host, settings.web.port), make_handler(settings))
     print(f"Web dashboard: http://{settings.web.host}:{settings.web.port}")
     server.serve_forever()
@@ -41,7 +42,19 @@ def route_get(handler: BaseHTTPRequestHandler, settings: Settings) -> None:
     parsed = urlparse(handler.path)
     params = parse_qs(parsed.query)
     if parsed.path == "/":
-        redirect(handler, "/companies")
+        redirect(handler, "/radar")
+        return
+    if parsed.path == "/radar":
+        render(handler, "今日雷达", render_radar(settings))
+        return
+    if parsed.path == "/jobs":
+        render(handler, "招聘事件库", render_jobs(settings, params))
+        return
+    if parsed.path == "/applications":
+        render(handler, "投递进度", render_applications(settings, params))
+        return
+    if parsed.path == "/reviews":
+        render(handler, "人工核验", render_reviews(settings, params))
         return
     if parsed.path == "/companies":
         render(handler, "企业库", render_companies(settings, params))
@@ -83,7 +96,150 @@ def route_post(handler: BaseHTTPRequestHandler, settings: Settings) -> None:
         update_source(settings, form)
         redirect(handler, form.get("next", "/sources"))
         return
+    if parsed.path == "/jobs/update":
+        update_job(settings, form)
+        redirect(handler, form.get("next", "/jobs"))
+        return
+    if parsed.path == "/applications/save":
+        save_application(settings, form)
+        redirect(handler, form.get("next", "/applications"))
+        return
+    if parsed.path == "/reviews/update":
+        update_review(settings, form)
+        redirect(handler, form.get("next", "/reviews"))
+        return
     send_text(handler, "not found", status=HTTPStatus.NOT_FOUND)
+
+
+def render_radar(settings: Settings) -> str:
+    with connect(settings) as conn:
+        counts = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM job_events WHERE date(first_seen_at) = date('now', 'localtime')) AS new_today,
+              (SELECT COUNT(*) FROM job_events WHERE status IN ('open', 'pending_review')) AS open_jobs,
+              (SELECT COUNT(*) FROM job_events WHERE deadline_at IS NOT NULL
+                 AND date(deadline_at) BETWEEN date('now', 'localtime') AND date('now', 'localtime', '+7 days')) AS closing_soon,
+              (SELECT COUNT(*) FROM review_tasks WHERE status = 'pending') AS pending_reviews,
+              (SELECT COUNT(*) FROM applications WHERE status NOT IN ('offer', 'rejected', 'abandoned')) AS active_applications,
+              (SELECT COUNT(*) FROM sources WHERE health_status IN ('error', 'blocked', 'structure_changed', 'stale')) AS unhealthy_sources
+            """
+        ).fetchone()
+        jobs = conn.execute(
+            """
+            SELECT je.id, je.title, je.match_score, je.match_level, je.qingdao_level,
+                   je.deadline_at, je.status, je.application_url, c.company_name
+            FROM job_events je
+            LEFT JOIN companies c ON c.id = je.entity_id
+            WHERE je.status IN ('open', 'pending_review')
+            ORDER BY je.match_score DESC, je.first_seen_at DESC
+            LIMIT 12
+            """
+        ).fetchall()
+        reviews = conn.execute(
+            """
+            SELECT id, priority, task_type, title, created_at
+            FROM review_tasks WHERE status = 'pending'
+            ORDER BY CASE priority WHEN 'S' THEN 0 WHEN 'A' THEN 1 WHEN 'B' THEN 2 ELSE 3 END, created_at
+            LIMIT 10
+            """
+        ).fetchall()
+
+    cards = f"""
+    <div class="cards">
+      <div class="card"><strong>{counts['new_today']}</strong><span>今日新增</span></div>
+      <div class="card"><strong>{counts['open_jobs']}</strong><span>开放/待核招聘</span></div>
+      <div class="card"><strong>{counts['closing_soon']}</strong><span>7日内截止</span></div>
+      <div class="card"><strong>{counts['active_applications']}</strong><span>进行中投递</span></div>
+      <div class="card"><strong>{counts['pending_reviews']}</strong><span>待人工核验</span></div>
+      <div class="card"><strong>{counts['unhealthy_sources']}</strong><span>异常渠道</span></div>
+    </div>
+    """
+    job_table = table_html(
+        ["匹配", "企业", "招聘事件", "青岛关系", "截止", "状态", "入口"],
+        [[r["match_score"], html.escape(r["company_name"] or "待识别"), html.escape(r["title"]),
+          r["qingdao_level"], r["deadline_at"] or "-", r["status"], link(r["application_url"])] for r in jobs],
+    )
+    review_table = table_html(
+        ["优先级", "类型", "任务", "创建时间"],
+        [[r["priority"], r["task_type"], html.escape(r["title"]), r["created_at"]] for r in reviews],
+    )
+    return cards + "<h3>优先查看</h3>" + job_table + "<h3>待核验事项</h3>" + review_table
+
+
+def render_jobs(settings: Settings, params: dict[str, list[str]]) -> str:
+    status, match_level, qingdao_level, q = (first(params, key) for key in ("status", "match_level", "qingdao_level", "q"))
+    where, values = [], []
+    for column, value in (("je.status", status), ("je.match_level", match_level), ("je.qingdao_level", qingdao_level)):
+        if value:
+            where.append(f"{column} = ?")
+            values.append(value)
+    if q:
+        where.append("(je.title LIKE ? OR c.company_name LIKE ? OR c.group_name LIKE ?)")
+        values.extend([f"%{q}%"] * 3)
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+    with connect(settings) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT je.id, je.title, je.recruitment_type, je.qingdao_level, je.deadline_at,
+                   je.application_url, je.match_score, je.match_level, je.status, je.first_seen_at,
+                   c.company_name, c.priority,
+                   (SELECT COUNT(*) FROM raw_items ri WHERE ri.job_event_id = je.id) AS source_count,
+                   (SELECT COUNT(*) FROM job_positions jp WHERE jp.job_event_id = je.id) AS position_count
+            FROM job_events je LEFT JOIN companies c ON c.id = je.entity_id
+            {where_sql}
+            ORDER BY je.match_score DESC, je.first_seen_at DESC LIMIT 300
+            """, values,
+        ).fetchall()
+    filters = filter_bar("/jobs", {"q": q}, extra=(
+        '<select name="status"><option value="">全部状态</option>' + options(["pending_review", "open", "closing_soon", "closed", "invalid"], status) + '</select>'
+        '<select name="match_level"><option value="">全部匹配度</option>' + options(["strong", "worth_reviewing", "possible", "pending", "mismatch"], match_level) + '</select>'
+        '<select name="qingdao_level"><option value="">全部地点</option>' + options(["confirmed", "possible", "shandong", "national", "pending", "outside"], qingdao_level) + '</select>'
+    ))
+    rows_html = []
+    for r in rows:
+        rows_html.append([r["priority"] or "-", html.escape(r["company_name"] or "待识别"), r["match_score"],
+            r["match_level"], html.escape(r["title"]), r["recruitment_type"], r["qingdao_level"],
+            r["position_count"], r["source_count"], r["deadline_at"] or "-", link(r["application_url"]),
+            job_status_form(r["id"], r["status"], current_path(params, "/jobs"))])
+    return filters + summary(len(rows), 1) + table_html(
+        ["优先级", "企业", "分数", "匹配", "招聘事件", "类型", "地点", "岗位", "来源", "截止", "报名", "状态"], rows_html)
+
+
+def render_applications(settings: Settings, params: dict[str, list[str]]) -> str:
+    status = first(params, "status")
+    where, values = (" WHERE a.status = ?", [status]) if status else ("", [])
+    with connect(settings) as conn:
+        rows = conn.execute(
+            f"""SELECT a.id, a.status, a.priority, a.resume_version, a.applied_at, a.next_action,
+                       a.next_action_at, a.result, a.notes, je.title, c.company_name
+                FROM applications a JOIN job_events je ON je.id = a.job_event_id
+                LEFT JOIN companies c ON c.id = a.company_id {where}
+                ORDER BY COALESCE(a.next_action_at, '9999-12-31'), a.updated_at DESC""", values,
+        ).fetchall()
+    filters = filter_bar("/applications", {"q": ""}, extra='<select name="status"><option value="">全部状态</option>' + options(application_statuses(), status) + '</select>')
+    rows_html = [[r["priority"], html.escape(r["company_name"] or "-"), html.escape(r["title"]), r["resume_version"] or "-",
+        r["applied_at"] or "-", r["next_action"] or "-", r["next_action_at"] or "-", r["result"] or "-",
+        application_form(r["id"], r["status"], "/applications")] for r in rows]
+    return filters + table_html(["优先级", "企业", "岗位/批次", "简历", "投递时间", "下一步", "提醒", "结果", "状态"], rows_html)
+
+
+def render_reviews(settings: Settings, params: dict[str, list[str]]) -> str:
+    status = first(params, "status") or "pending"
+    with connect(settings) as conn:
+        rows = conn.execute(
+            """SELECT rt.id, rt.priority, rt.task_type, rt.title, rt.description, rt.suggested_action,
+                      rt.status, rt.created_at, c.company_name, s.url
+               FROM review_tasks rt LEFT JOIN companies c ON c.id = rt.company_id
+               LEFT JOIN sources s ON s.id = rt.source_id WHERE rt.status = ?
+               ORDER BY CASE rt.priority WHEN 'S' THEN 0 WHEN 'A' THEN 1 WHEN 'B' THEN 2 ELSE 3 END, rt.created_at""",
+            (status,),
+        ).fetchall()
+    filters = filter_bar("/reviews", {"q": ""}, extra='<select name="status">' + options(["pending", "in_progress", "resolved", "ignored"], status) + '</select>')
+    rows_html = [[r["priority"], r["task_type"], html.escape(r["company_name"] or "-"), html.escape(r["title"]),
+        truncate(r["description"], 160), truncate(r["suggested_action"], 100), link(r["url"]),
+        review_form(r["id"], r["status"], "/reviews")] for r in rows]
+    return filters + summary(len(rows), 1) + table_html(["优先级", "类型", "企业", "问题", "说明", "建议", "证据", "处理"], rows_html)
 
 
 def render_companies(settings: Settings, params: dict[str, list[str]]) -> str:
@@ -689,6 +845,36 @@ def update_source(settings: Settings, form: dict[str, str]) -> None:
         conn.commit()
 
 
+def update_job(settings: Settings, form: dict[str, str]) -> None:
+    with connect(settings) as conn:
+        conn.execute(
+            "UPDATE job_events SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (form.get("status", "pending_review"), int(form["job_event_id"])),
+        )
+        conn.commit()
+
+
+def save_application(settings: Settings, form: dict[str, str]) -> None:
+    with connect(settings) as conn:
+        conn.execute(
+            "UPDATE applications SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (form.get("status", "undecided"), int(form["application_id"])),
+        )
+        conn.commit()
+
+
+def update_review(settings: Settings, form: dict[str, str]) -> None:
+    status = form.get("status", "pending")
+    with connect(settings) as conn:
+        conn.execute(
+            """UPDATE review_tasks SET status = ?, resolution = ?,
+                      resolved_at = CASE WHEN ? IN ('resolved', 'ignored') THEN CURRENT_TIMESTAMP ELSE NULL END,
+                      updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+            (status, form.get("resolution", ""), status, int(form["review_task_id"])),
+        )
+        conn.commit()
+
+
 def render(handler: BaseHTTPRequestHandler, title: str, body: str) -> None:
     content = layout(title, body).encode("utf-8")
     handler.send_response(HTTPStatus.OK)
@@ -729,10 +915,14 @@ def layout(title: str, body: str) -> str:
   </style>
 </head>
 <body>
-  <header><h1>Job Watcher</h1></header>
+  <header><h1>秋招雷达 · Qingdao Job Radar</h1></header>
   <nav>
+    <a href="/radar">今日雷达</a>
+    <a href="/jobs">招聘事件</a>
+    <a href="/applications">投递进度</a>
+    <a href="/reviews">人工核验</a>
     <a href="/companies">企业库</a>
-    <a href="/coverage">覆盖率</a>
+    <a href="/coverage">覆盖中心</a>
     <a href="/sources">来源管理</a>
     <a href="/sources?status=verified_official">已确认官网</a>
     <a href="/sources?status=verified_recruitment">已确认招聘</a>
@@ -772,6 +962,35 @@ def options(values: list[str], selected: str) -> str:
         f'<option value="{html.escape(value)}"{" selected" if value == selected else ""}>{html.escape(value)}</option>'
         for value in values
     )
+
+
+def job_status_form(job_event_id: int, status: str, next_path: str) -> str:
+    return f'''<form class="inline" method="post" action="/jobs/update">
+      <input type="hidden" name="job_event_id" value="{job_event_id}">
+      <input type="hidden" name="next" value="{html.escape(next_path)}">
+      <select name="status">{options(["pending_review", "open", "closing_soon", "closed", "invalid"], status)}</select>
+      <button type="submit">保存</button></form>'''
+
+
+def application_statuses() -> list[str]:
+    return ["undecided", "preparing", "applied", "written_test", "interview", "waiting", "offer", "rejected", "abandoned"]
+
+
+def application_form(application_id: int, status: str, next_path: str) -> str:
+    return f'''<form class="inline" method="post" action="/applications/save">
+      <input type="hidden" name="application_id" value="{application_id}">
+      <input type="hidden" name="next" value="{html.escape(next_path)}">
+      <select name="status">{options(application_statuses(), status)}</select>
+      <button type="submit">保存</button></form>'''
+
+
+def review_form(review_task_id: int, status: str, next_path: str) -> str:
+    return f'''<form class="inline" method="post" action="/reviews/update">
+      <input type="hidden" name="review_task_id" value="{review_task_id}">
+      <input type="hidden" name="next" value="{html.escape(next_path)}">
+      <select name="status">{options(["pending", "in_progress", "resolved", "ignored"], status)}</select>
+      <input name="resolution" placeholder="处理结论">
+      <button type="submit">保存</button></form>'''
 
 
 def summary(total: int, page: int) -> str:

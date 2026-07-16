@@ -17,11 +17,15 @@ dependencies = [
   "pydantic-settings>=2.3",
   "pyyaml>=6.0",
   "pandas>=2.2",
+  "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2",
+]
+browser = [
+  "playwright>=1.49",
 ]
 
 [project.scripts]
@@ -33,4 +37,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-

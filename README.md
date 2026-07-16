@@ -2,7 +2,11 @@
 
 青岛国企/央企 2027 秋招信息汇总与求职助手。
 
-当前阶段：工程化收口与 MVP 数据底座开发。
+当前阶段：阶段 A/B 已验收，进入招聘事件解析、归并与个人匹配阶段。
+
+V1 在保留旧数据的基础上新增：企业层级、渠道健康度、原始证据、招聘事件、
+具体岗位、个人投递和人工核验等核心模型。`db-init` 可重复执行，并会为旧数据库
+补充兼容字段，不会清空已有企业、来源或招聘线索。
 
 主要文档：
 
@@ -14,6 +18,8 @@
 - `docs/development.md`：主开发说明
 - `docs/vps_deployment.md`：VPS 部署记录和运维命令
 - `docs/search_monitoring.md`：主动搜索监控核心设计
+- `docs/collector_validation.md`：真实页面采集与失败分类验证记录
+- `docs/stage_c_implementation_plan.md`：阶段 C 的解析、归并、匹配和验收任务清单
 
 ## 本地配置检查
 
@@ -27,7 +33,9 @@ python -m job_watcher.cli config-check
 ```powershell
 $env:PYTHONPATH="E:\job_watcher\src"
 python -m job_watcher.cli db-init
+python -m job_watcher.cli seed-data-doctor
 python -m job_watcher.cli import-seed
+python -m job_watcher.cli migrate-legacy-leads
 ```
 
 当前导入结果：
@@ -37,6 +45,10 @@ python -m job_watcher.cli import-seed
   - 表格拆分来源：690 条
   - 固定公共源：15 条
 - P0/P1 企业：215 条
+
+`seed-data-doctor` 会校验必需字段、重复 `company_key`、跨文件关联、manifest 数量和 SHA-256。
+`import-seed` 可重复执行；`migrate-legacy-leads` 非破坏性保留旧表，并建立
+`sources -> raw_items -> job_events -> job_positions` 可追溯链路。
 
 ## 启动本地 Web 看板
 
@@ -92,6 +104,42 @@ $env:PYTHONPATH="E:\job_watcher\src"
 python -m job_watcher.cli db-init
 python -m job_watcher.cli crawl-once --limit 20
 ```
+
+每次采集都会写入 `source_runs`，并将最新原始证据写入 `raw_items`，同时保留旧版
+`crawl_snapshots` 兼容链路。运行状态会区分成功、成功但内容未变化、HTTP 错误、
+网络错误、访问阻断、需要浏览器和正文解析失败；无法自动处理的异常会进入
+`review_tasks`，不会显示为“成功无新增”。
+
+HTML 公告会自动发现 PDF、DOC/DOCX、XLS/XLSX 和 CSV 附件。PDF、DOCX、XLSX、CSV
+可提取文本并作为独立 `raw_items` 证据保存；旧版 DOC/XLS 或解析失败的附件进入人工核验，
+主页面仍记录为成功但本次运行标记为 `partial_success`。
+
+采集器默认限制单响应 25 MiB、单页 10 个附件，并对临时网络错误和 429/5xx 做有限重试。
+附件原文件按内容哈希保存在快照目录。动态页面可通过 `job-watcher[browser]` 安装
+Playwright 后启用 `browser_fallback_enabled`；未安装浏览器时会留下明确核验状态。
+
+单 URL 诊断不会写数据库：
+
+```bash
+PYTHONPATH=src python -m job_watcher.cli collect-url https://example.com/recruit
+PYTHONPATH=src python -m job_watcher.cli collect-url https://example.com/recruit --browser
+```
+
+固定采集验收池位于 `config/collector_samples.csv`，当前包含 22 个政府、高校、招聘平台、
+企业官网和文档样本。批量验收同样只读，不写数据库；默认输出完整 JSON，`--strict` 会在
+实际状态超出样本允许范围时返回非零退出码：
+
+```bash
+PYTHONPATH=src python -m job_watcher.cli validate-collector-samples --timeout 5
+PYTHONPATH=src python -m job_watcher.cli validate-collector-samples --category document --strict
+PYTHONPATH=src python -m job_watcher.cli validate-collector-samples --output data/collector-validation.json
+```
+
+成功采集结果会写入可解释的正文质量分和质量标记。低于
+`content_quality_review_threshold` 的内容仍保留证据，但 `parse_status` 为 `needs_review`，
+并创建幂等的 `content_quality` 核验任务。扫描型 PDF 使用 `ocr_required` 明确降级；旧版
+DOC/XLS 使用 `legacy_office_conversion_required`；链接型 PNG/JPG/TIFF/WebP 公告也会作为附件
+保存并标记 `ocr_required`。原文件均保留供 OCR、格式转换或人工核验。
 
 本地网络不稳定时可以临时缩短超时：
 
