@@ -372,12 +372,17 @@ python -m job_watcher.cli crawl-once --limit 5 --timeout 4
 
 ## 11. 当前推荐下一步
 
-下一步应执行：
+阶段 A 数据底座和阶段 B 采集器已经完成验收。本文前面的 Milestone 1–3 属于历史 MVP 计划，
+当前开发应以 `docs/codex_development_guide.md` 和 `docs/stage_c_implementation_plan.md` 为准。
+
+下一步应执行阶段 C：
 
 ```text
-Milestone 1：工程骨架与配置
-Milestone 2：数据库与导入器
-Milestone 3：Web 看板 MVP
+招聘分类与字段提取
+-> 企业别名匹配
+-> 保守去重与证据归并
+-> 个人匹配评分
+-> 人工核验和招聘事件页面
 ```
 
-在 Web 看板可用前，不建议继续大规模搜索或抓取。
+先完成固定样本、幂等数据链路和数据库断言，再扩展页面与大规模采集。

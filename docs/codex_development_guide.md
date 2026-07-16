@@ -2,7 +2,7 @@
 
 > 项目仓库：`wzw57/job-watcher`  
 > 当前开发分支：`agent/v1-data-foundation`  
-> 当前草稿 PR：`#1 Add V1 recruitment data foundation`  
+> 当前草稿 PR：`#1 Build V1 data and collector foundation`
 > 文档用途：作为 Codex 网页版、后续开发者和项目维护者的唯一开发基线。
 
 ## 1. 项目定位
@@ -323,7 +323,7 @@ HTTP 失败后可降级为浏览器渲染，再降级为搜索转载，最终生
 验收结果：真实 seed manifest、字段、跨文件 key 和 SHA-256 校验通过；重复导入后仍为
 500 企业、705 总来源；旧数据迁移可重复执行，外键无违规，新旧数据通过 legacy id 可追溯。
 
-### 阶段 B：采集器重构（基础能力已完成，进入验收）
+### 阶段 B：采集器重构（已验收）
 
 - 建立统一 Collector 接口；
 - HTTP 采集写入 `source_runs` 和 `raw_items`；
@@ -342,7 +342,8 @@ XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_su
 低于阈值时保留证据并进入人工核验。扫描 PDF 明确标记 `ocr_required`，旧 DOC/XLS 标记
 `legacy_office_conversion_required`，作为后续可选 OCR/格式转换服务的稳定接口。
 
-验收：选取至少 20 个不同类型官方/政府/高校页面，能够区分成功无新增、失败和解析失败，并保留证据。
+验收结果：23 项单元测试通过；22 个政府、高校、平台、企业和文档真实样本严格验收
+22/22 符合预期；采集成功、HTTP 错误、访问阻断、需要浏览器和网络错误均能明确区分并保留证据。
 
 ### 阶段 C：招聘归并与匹配
 
@@ -353,6 +354,9 @@ XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_su
 - 个人匹配评分和理由。
 
 验收：同一公告多站转载只显示一个招聘事件，全部来源仍可查看；不同子公司不会被误合并。
+
+当前实施基线见 `docs/stage_c_implementation_plan.md`。必须先完成纯数据解析契约、固定样本和
+幂等处理链路，再更新页面。低质量正文、泛招聘入口、搜索摘要和主体歧义不得直接创建正式事件。
 
 ### 阶段 D：覆盖中心和主体发现
 
@@ -420,25 +424,30 @@ XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_su
 - 不把与当前任务无关的用户改动纳入提交；
 - PR 描述必须包含变化、原因、影响和验证方法。
 
-当前草稿 PR 继续承载阶段 A/B 的可审查提交；合并后为阶段 C 创建独立功能分支。
+当前用户选择由 Codex 继续推进阶段 C。若 PR #1 尚未合并，继续使用
+`agent/v1-data-foundation` 和现有草稿 PR，不创建重复 PR、不擅自合并；若 PR #1 已合并，
+则从最新 `main` 创建 `agent/stage-c-recruitment-pipeline` 和新的草稿 PR。
 
 ## 19. Codex 网页版接手提示词
 
 ```text
 请接手 GitHub 仓库 wzw57/job-watcher，先阅读：
 1. docs/codex_development_guide.md
-2. README.md
-3. docs/architecture.md
-4. 当前 PR #1 的完整 diff
+2. docs/stage_c_implementation_plan.md
+3. README.md
+4. docs/architecture.md
+5. 当前 PR #1 的完整 diff 和最新提交
 
 项目必须以 docs/codex_development_guide.md 为需求基线，旧代码只用于复用数据和实现，不得以旧版页面或 job_leads 模型限制新设计。
 
-先检查 PR #1 的数据库迁移、测试和新版页面，修复问题并完成“阶段 A：数据底座迁移”。不要直接删除旧表或现有企业/来源数据。所有新招聘数据必须遵循 sources -> raw_items -> job_events -> job_positions 的证据链。
+阶段 A/B 已验收。请按 docs/stage_c_implementation_plan.md 完整实现阶段 C：招聘分类、字段和岗位提取、企业别名匹配、保守去重、个人匹配、人工核验及证据来源展示。不要删除旧表或现有企业/来源数据。所有新招聘数据必须遵循 sources -> raw_items -> job_events -> job_positions 的证据链。
 
 工作过程中：
-- 保持草稿 PR；
+- PR #1 未合并时继续当前分支和草稿 PR，不创建重复 PR；
 - 分小提交；
 - 每完成一个里程碑运行测试；
+- 使用至少 12 个脱敏固定样本做数据库断言；
+- 所有低置信度判断进入 review_tasks，不得静默猜测；
 - 在 PR 描述中记录验证结果；
 - 遇到产品决策冲突时以本开发文档和用户最新要求为准；
 - 不擅自扩大为通用招聘平台。
@@ -446,8 +455,9 @@ XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_su
 
 ## 20. 最近的下一步
 
-完成阶段 B 固定样本验收后进入阶段 C：先定义招聘事件字段提取契约和固定公告样本，再实现
-`raw_items -> job_events -> job_positions` 的可追溯解析、企业别名匹配和保守去重。
+按 `docs/stage_c_implementation_plan.md` 实现阶段 C。第一组提交应先增加状态常量、纯数据解析
+契约和至少 12 个脱敏固定样本；随后完成幂等处理命令、企业匹配、保守去重、个人匹配和页面
+证据展示。不得用旧 `job_leads` 代替新证据链。
 
 ---
 
