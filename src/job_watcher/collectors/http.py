@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import re
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from job_watcher.collectors.base import CollectionResult
 from job_watcher.config import Settings
 from job_watcher.parsers.documents import DocumentParseError, parse_document
-from job_watcher.parsers.html import ATTACHMENT_EXTENSIONS, discover_attachments
+from job_watcher.parsers.html import ATTACHMENT_EXTENSIONS, discover_attachments, extract_readable_text
 
 
-TAG_RE = re.compile(r"<[^>]+>")
-TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
-SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 SPACE_RE = re.compile(r"\s+")
 JS_SHELL_MARKERS = ("enable javascript", "请开启javascript", "__next_data__", "id=\"app\"")
 
@@ -29,19 +26,36 @@ class HttpCollector:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
         })
-        try:
-            with urlopen(request, timeout=self.settings.crawler.timeout_seconds) as response:
-                raw = response.read()
-                final_url = response.geturl()
-                status = int(getattr(response, "status", 200))
-                content_type = response.headers.get("Content-Type", "")
-        except HTTPError as exc:
-            raw = exc.read()
-            final_url = exc.geturl()
-            status = int(exc.code)
-            content_type = exc.headers.get("Content-Type", "") if exc.headers else ""
-        except (URLError, TimeoutError, OSError) as exc:
-            return CollectionResult("network_error", url, url, error_type=type(exc).__name__, error_message=str(exc)[:500])
+        attempts = max(1, self.settings.crawler.retry_attempts)
+        raw = b""; final_url = url; status = 0; content_type = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                with urlopen(request, timeout=self.settings.crawler.timeout_seconds) as response:
+                    raw = response.read(self.settings.crawler.max_response_bytes + 1)
+                    final_url = response.geturl()
+                    status = int(getattr(response, "status", 200))
+                    content_type = response.headers.get("Content-Type", "")
+            except HTTPError as exc:
+                raw = exc.read(self.settings.crawler.max_response_bytes + 1)
+                final_url = exc.geturl()
+                status = int(exc.code)
+                content_type = exc.headers.get("Content-Type", "") if exc.headers else ""
+            except (URLError, TimeoutError, OSError) as exc:
+                if attempt < attempts:
+                    time.sleep(self.settings.crawler.retry_backoff_seconds * attempt)
+                    continue
+                return CollectionResult("network_error", url, url, error_type=type(exc).__name__,
+                                        error_message=str(exc)[:500], metadata={"attempts": attempt})
+            if status in {429, 500, 502, 503, 504} and attempt < attempts:
+                time.sleep(self.settings.crawler.retry_backoff_seconds * attempt)
+                continue
+            break
+
+        if len(raw) > self.settings.crawler.max_response_bytes:
+            return CollectionResult("too_large", url, final_url, status, content_type,
+                                    error_type="response_too_large",
+                                    error_message=f"response exceeds {self.settings.crawler.max_response_bytes} bytes",
+                                    metadata={"bytes_read": len(raw), "attempts": attempt})
 
         if is_document(final_url, content_type):
             digest = hashlib.sha256(raw).hexdigest()
@@ -52,13 +66,15 @@ class HttpCollector:
             except DocumentParseError as exc:
                 return CollectionResult("parse_failed", url, final_url, status, content_type,
                                         content_hash=digest, error_type="document_parse_failed",
-                                        error_message=str(exc), metadata={"bytes": len(raw), "document": True})
+                                        error_message=str(exc), metadata={"bytes": len(raw), "document": True, "attempts": attempt},
+                                        content_bytes=raw)
             return CollectionResult("success", url, final_url, status, content_type,
                                     title=final_url.rsplit("/", 1)[-1].split("?", 1)[0], text=text,
-                                    content_hash=digest, metadata={"bytes": len(raw), "document": True})
+                                    content_hash=digest, metadata={"bytes": len(raw), "document": True, "attempts": attempt},
+                                    content_bytes=raw)
 
         body = raw.decode(guess_encoding(content_type), errors="replace")
-        title, text = extract_text(body)
+        title, text, extraction = extract_readable_text(body)
         digest = hashlib.sha256(normalize_for_hash(text or body).encode()).hexdigest()
         if status in {401, 403, 429}:
             result_status, error_type = "blocked", f"http_{status}"
@@ -73,7 +89,7 @@ class HttpCollector:
         return CollectionResult(
             result_status, url, final_url, status, content_type, title, text, body, digest,
             error_type, "" if result_status == "success" else f"collection status: {result_status}",
-            {"bytes": len(raw)}, discover_attachments(body, final_url),
+            {"bytes": len(raw), "attempts": attempt, **extraction}, discover_attachments(body, final_url),
         )
 
 
@@ -83,11 +99,8 @@ def guess_encoding(content_type: str) -> str:
 
 
 def extract_text(html_text: str) -> tuple[str, str]:
-    title_match = TITLE_RE.search(html_text)
-    title = html.unescape(SPACE_RE.sub(" ", title_match.group(1)).strip()) if title_match else ""
-    body = SCRIPT_RE.sub(" ", html_text)
-    body = TAG_RE.sub(" ", body)
-    return title, html.unescape(SPACE_RE.sub(" ", body).strip())
+    title, text, _ = extract_readable_text(html_text)
+    return title, text
 
 
 def normalize_for_hash(text: str) -> str:

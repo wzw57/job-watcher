@@ -18,6 +18,7 @@ V1 在保留旧数据的基础上新增：企业层级、渠道健康度、原�
 - `docs/development.md`：主开发说明
 - `docs/vps_deployment.md`：VPS 部署记录和运维命令
 - `docs/search_monitoring.md`：主动搜索监控核心设计
+- `docs/collector_validation.md`：真实页面采集与失败分类验证记录
 
 ## 本地配置检查
 
@@ -111,6 +112,17 @@ python -m job_watcher.cli crawl-once --limit 20
 HTML 公告会自动发现 PDF、DOC/DOCX、XLS/XLSX 和 CSV 附件。PDF、DOCX、XLSX、CSV
 可提取文本并作为独立 `raw_items` 证据保存；旧版 DOC/XLS 或解析失败的附件进入人工核验，
 主页面仍记录为成功但本次运行标记为 `partial_success`。
+
+采集器默认限制单响应 25 MiB、单页 10 个附件，并对临时网络错误和 429/5xx 做有限重试。
+附件原文件按内容哈希保存在快照目录。动态页面可通过 `job-watcher[browser]` 安装
+Playwright 后启用 `browser_fallback_enabled`；未安装浏览器时会留下明确核验状态。
+
+单 URL 诊断不会写数据库：
+
+```bash
+PYTHONPATH=src python -m job_watcher.cli collect-url https://example.com/recruit
+PYTHONPATH=src python -m job_watcher.cli collect-url https://example.com/recruit --browser
+```
 
 本地网络不稳定时可以临时缩短超时：
 

@@ -24,6 +24,9 @@ dependencies = [
 dev = [
   "pytest>=8.2",
 ]
+browser = [
+  "playwright>=1.49",
+]
 
 [project.scripts]
 job-watcher = "job_watcher.cli:main"

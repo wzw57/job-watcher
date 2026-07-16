@@ -4,7 +4,7 @@ import io
 import zipfile
 
 from job_watcher.parsers.documents import parse_document
-from job_watcher.parsers.html import discover_attachments
+from job_watcher.parsers.html import discover_attachments, extract_readable_text
 
 
 def zipped(files: dict[str, str]) -> bytes:
@@ -32,3 +32,9 @@ def test_parses_xlsx_shared_strings() -> None:
         "xl/worksheets/sheet1.xml": '<worksheet xmlns="x"><sheetData><row><c t="s"><v>0</v></c><c t="s"><v>1</v></c></row></sheetData></worksheet>',
     })
     assert parse_document(data, "jobs.xlsx") == "岗位 青岛"
+
+
+def test_readable_text_prefers_main_and_ignores_navigation() -> None:
+    main = "青岛网络安全校园招聘岗位说明" * 10
+    title, text, metadata = extract_readable_text(f"<title>招聘</title><nav>首页 招聘 联系</nav><main><p>{main}</p></main><footer>版权</footer>")
+    assert title == "招聘" and main in text and "首页" not in text and metadata["used_main_content"] is True

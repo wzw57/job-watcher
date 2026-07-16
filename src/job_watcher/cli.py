@@ -53,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     crawl_parser.add_argument("--limit", type=int, default=20, help="Maximum sources to fetch.")
     crawl_parser.add_argument("--timeout", type=int, default=0, help="Temporary crawler timeout override in seconds.")
 
+    collect_url_parser = subparsers.add_parser("collect-url", help="Diagnose one URL without writing to the database.")
+    collect_url_parser.add_argument("url", help="Public HTTP(S) URL to collect.")
+    collect_url_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    collect_url_parser.add_argument("--browser", action="store_true", help="Enable Playwright fallback for this check.")
+
     cleanup_parser = subparsers.add_parser(
         "cleanup-weak-leads",
         help="Mark leads without explicit 2027 campus recruitment evidence as invalid.",
@@ -95,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
         return auto_confirm_sources(args.settings or None)
     if args.command == "crawl-once":
         return crawl_once(args.settings or None, args.limit, args.timeout or None)
+    if args.command == "collect-url":
+        return collect_url(args.url, args.settings or None, args.browser)
     if args.command == "cleanup-weak-leads":
         return cleanup_weak_leads(args.settings or None)
     if args.command == "generate-search-tasks":
@@ -271,6 +278,23 @@ def crawl_once(settings_path: str | None, limit: int, timeout: int | None) -> in
     print(f"database: {settings.paths.database_path}")
     print(f"snapshots: {settings.paths.snapshots_dir}")
     return 0
+
+
+def collect_url(url: str, settings_path: str | None, browser: bool) -> int:
+    from job_watcher.collectors import build_collector
+
+    settings = load_settings(settings_path)
+    if browser:
+        settings = replace(settings, crawler=replace(settings.crawler, browser_fallback_enabled=True))
+    result = build_collector(settings).collect(url)
+    print(json.dumps({
+        "status": result.status, "requested_url": result.requested_url, "final_url": result.final_url,
+        "http_status": result.http_status, "content_type": result.content_type, "title": result.title,
+        "text_chars": len(result.text), "content_hash": result.content_hash,
+        "attachments": list(result.attachments), "error_type": result.error_type,
+        "error_message": result.error_message, "metadata": dict(result.metadata),
+    }, ensure_ascii=False, indent=2))
+    return 0 if result.succeeded else 1
 
 
 def cleanup_weak_leads(settings_path: str | None) -> int:

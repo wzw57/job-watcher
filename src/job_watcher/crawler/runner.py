@@ -13,7 +13,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from job_watcher.collectors import CollectionResult, Collector, HttpCollector
+from job_watcher.collectors import CollectionResult, Collector, build_collector
 from job_watcher.config import Settings
 from job_watcher.crawler.keywords import (
     CAMPUS_RECRUITMENT_KEYWORDS,
@@ -52,7 +52,7 @@ def run_crawl_once(
     priority_scope: tuple[str, ...] = ("P0", "P1"),
     collector: Collector | None = None,
 ) -> CrawlResult:
-    collector = collector or HttpCollector(settings)
+    collector = collector or build_collector(settings)
     sources = select_sources(conn, limit=limit, priority_scope=priority_scope)
     counts = {
         "checked": 0,
@@ -70,7 +70,7 @@ def run_crawl_once(
         started = time.monotonic()
         try:
             result = collector.collect(source["url"])
-            raw_item_id, raw_is_new = save_raw_item(conn, source, result)
+            raw_item_id, raw_is_new = save_raw_item(conn, settings, source, result)
             counts["raw_items_new"] += int(raw_is_new)
             if not result.succeeded:
                 counts["errors"] += 1
@@ -84,13 +84,13 @@ def run_crawl_once(
             items_seen = 1
             items_new = int(raw_is_new)
             attachment_failures = 0
-            for attachment in result.attachments[:10]:
+            for attachment in result.attachments[:settings.crawler.max_attachments]:
                 attachment_result = collector.collect(attachment["url"])
                 attachment_result = replace(
                     attachment_result,
                     metadata={**dict(attachment_result.metadata), "parent_url": result.final_url, "link_label": attachment.get("label", "")},
                 )
-                attachment_id, attachment_is_new = save_raw_item(conn, source, attachment_result)
+                attachment_id, attachment_is_new = save_raw_item(conn, settings, source, attachment_result)
                 items_seen += 1
                 items_new += int(attachment_is_new)
                 counts["raw_items_new"] += int(attachment_is_new)
@@ -143,30 +143,49 @@ def finish_source_run(conn: sqlite3.Connection, run_id: int, result: CollectionR
     )
 
 
-def save_raw_item(conn: sqlite3.Connection, source: sqlite3.Row, result: CollectionResult) -> tuple[int, bool]:
+def save_raw_item(conn: sqlite3.Connection, settings: Settings, source: sqlite3.Row, result: CollectionResult) -> tuple[int, bool]:
     canonical = result.final_url or result.requested_url
     existing = conn.execute("SELECT id,content_hash FROM raw_items WHERE source_id=? AND canonical_url=?", (source["id"], canonical)).fetchone()
     is_new = existing is None or (bool(result.content_hash) and existing["content_hash"] != result.content_hash)
     crawl_status = "success" if result.succeeded else result.status
     parse_status = "parsed" if result.succeeded else ("failed" if result.status == "parse_failed" else "pending")
     url_hash = hashlib.sha256(canonical.encode()).hexdigest()
+    stored_path = persist_binary_evidence(settings, int(source["id"]), result) if result.content_bytes else ""
+    metadata = {"http_status": result.http_status, "content_type": result.content_type,
+                "error_type": result.error_type, **dict(result.metadata)}
+    if stored_path:
+        metadata["stored_path"] = stored_path
     conn.execute(
-        """INSERT INTO raw_items(source_id,entity_hint,title,url,canonical_url,content_text,attachments_json,content_hash,url_hash,
+        """INSERT INTO raw_items(source_id,entity_hint,title,url,canonical_url,content_text,content_html_path,attachments_json,content_hash,url_hash,
            crawl_status,parse_status,credibility,merge_status,raw_metadata_json,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'unprocessed',?,CURRENT_TIMESTAMP)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'unprocessed',?,CURRENT_TIMESTAMP)
            ON CONFLICT(source_id,canonical_url) DO UPDATE SET title=excluded.title,content_text=excluded.content_text,
-           attachments_json=excluded.attachments_json,content_hash=excluded.content_hash,crawl_status=excluded.crawl_status,parse_status=excluded.parse_status,
+           content_html_path=excluded.content_html_path,attachments_json=excluded.attachments_json,content_hash=excluded.content_hash,crawl_status=excluded.crawl_status,parse_status=excluded.parse_status,
            raw_metadata_json=excluded.raw_metadata_json,last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP""",
         (source["id"], source["company_name"], result.title, result.requested_url, canonical, result.text,
-         json.dumps(list(result.attachments), ensure_ascii=False), result.content_hash or None, url_hash, crawl_status, parse_status, int(source["trust_level"] or 50),
-         json.dumps({"http_status":result.http_status,"content_type":result.content_type,"error_type":result.error_type,**dict(result.metadata)}, ensure_ascii=False)),
+         stored_path or None, json.dumps(list(result.attachments), ensure_ascii=False), result.content_hash or None,
+         url_hash, crawl_status, parse_status, int(source["trust_level"] or 50), json.dumps(metadata, ensure_ascii=False)),
     )
     row = conn.execute("SELECT id FROM raw_items WHERE source_id=? AND canonical_url=?", (source["id"], canonical)).fetchone()
     return int(row["id"]), is_new
 
 
+def persist_binary_evidence(settings: Settings, source_id: int, result: CollectionResult) -> str:
+    stamp = time.strftime("%Y/%m/%d")
+    directory = settings.paths.snapshots_dir / "attachments" / stamp
+    directory.mkdir(parents=True, exist_ok=True)
+    suffix = Path(result.final_url.split("?", 1)[0]).suffix.lower()
+    if suffix not in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv"}:
+        suffix = ".bin"
+    digest = result.content_hash or hashlib.sha256(result.content_bytes).hexdigest()
+    path = directory / f"source-{source_id}-{digest[:16]}{suffix}"
+    if not path.exists():
+        path.write_bytes(result.content_bytes)
+    return str(path)
+
+
 def ensure_collection_review(conn: sqlite3.Connection, source: sqlite3.Row, raw_item_id: int, result: CollectionResult) -> bool:
-    if result.status not in {"blocked", "needs_browser", "parse_failed", "http_error", "network_error"}:
+    if result.status not in {"blocked", "needs_browser", "parse_failed", "http_error", "network_error", "too_large", "browser_error", "browser_unavailable"}:
         return False
     title = f"来源采集异常：{source['name'] or source['url']} [{result.status}]"
     existing = conn.execute("SELECT id FROM review_tasks WHERE source_id=? AND task_type='collection_failure' AND title=? AND status IN ('pending','in_progress')", (source["id"], title)).fetchone()
@@ -204,7 +223,6 @@ def select_sources(conn: sqlite3.Connection, *, limit: int, priority_scope: tupl
         FROM sources s
         LEFT JOIN companies c ON c.id = s.company_id
         WHERE s.enabled = 1
-          AND s.requires_browser = 0
           AND s.verification_status IN (
             'verified_official',
             'verified_recruitment',

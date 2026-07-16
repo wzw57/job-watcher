@@ -46,7 +46,7 @@ def test_pipeline_writes_runs_raw_items_and_deduplicates(tmp_path: Path) -> None
                               attachments=({"url":"https://example.com/jobs.xlsx","label":"岗位表","extension":".xlsx"},))
     collector = FakeCollector({"https://example.com/ok": result,
                                "https://example.com/blocked": CollectionResult("blocked","https://example.com/blocked","https://example.com/blocked",403,error_type="http_403"),
-                               "https://example.com/jobs.xlsx": CollectionResult("success","https://example.com/jobs.xlsx","https://example.com/jobs.xlsx",200,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","jobs.xlsx","网络安全工程师 青岛",content_hash="xlsx-hash")})
+                               "https://example.com/jobs.xlsx": CollectionResult("success","https://example.com/jobs.xlsx","https://example.com/jobs.xlsx",200,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","jobs.xlsx","网络安全工程师 青岛",content_hash="xlsx-hash",content_bytes=b"original-xlsx")})
     first = run_crawl_once(conn, settings(tmp_path), limit=2, collector=collector)
     second = run_crawl_once(conn, settings(tmp_path), limit=2, collector=collector)
     assert first.checked == second.checked == 2
@@ -55,6 +55,8 @@ def test_pipeline_writes_runs_raw_items_and_deduplicates(tmp_path: Path) -> None
     assert conn.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM source_runs WHERE items_seen=2").fetchone()[0] == 2
     assert conn.execute("SELECT content_text FROM raw_items WHERE canonical_url LIKE '%jobs.xlsx'").fetchone()[0] == "网络安全工程师 青岛"
+    stored = conn.execute("SELECT content_html_path FROM raw_items WHERE canonical_url LIKE '%jobs.xlsx'").fetchone()[0]
+    assert Path(stored).read_bytes() == b"original-xlsx"
     assert conn.execute("SELECT COUNT(*) FROM crawl_snapshots").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM job_leads").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM review_tasks WHERE task_type='collection_failure'").fetchone()[0] == 1

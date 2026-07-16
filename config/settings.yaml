@@ -21,6 +21,11 @@ crawler:
   timeout_seconds: 20
   max_concurrency: 3
   snapshot_enabled: true
+  retry_attempts: 2
+  retry_backoff_seconds: 0.5
+  max_response_bytes: 26214400
+  max_attachments: 10
+  browser_fallback_enabled: false
 
 search:
   default_count: 5
@@ -39,4 +44,3 @@ web:
 
 feishu:
   enabled: false
-

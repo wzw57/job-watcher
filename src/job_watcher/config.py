@@ -40,6 +40,11 @@ class CrawlerConfig:
     timeout_seconds: int = 20
     max_concurrency: int = 3
     snapshot_enabled: bool = True
+    retry_attempts: int = 2
+    retry_backoff_seconds: float = 0.5
+    max_response_bytes: int = 25 * 1024 * 1024
+    max_attachments: int = 10
+    browser_fallback_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -139,6 +144,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
             timeout_seconds=int(crawler_raw.get("timeout_seconds", 20)),
             max_concurrency=int(crawler_raw.get("max_concurrency", 3)),
             snapshot_enabled=bool(crawler_raw.get("snapshot_enabled", True)),
+            retry_attempts=int(crawler_raw.get("retry_attempts", 2)),
+            retry_backoff_seconds=float(crawler_raw.get("retry_backoff_seconds", 0.5)),
+            max_response_bytes=int(crawler_raw.get("max_response_bytes", 25 * 1024 * 1024)),
+            max_attachments=int(crawler_raw.get("max_attachments", 10)),
+            browser_fallback_enabled=bool(crawler_raw.get("browser_fallback_enabled", False)),
         ),
         search=search,
         web=WebConfig(

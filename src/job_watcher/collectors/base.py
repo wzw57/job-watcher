@@ -19,6 +19,7 @@ class CollectionResult:
     error_message: str = ""
     metadata: Mapping[str, object] = field(default_factory=dict)
     attachments: tuple[Mapping[str, str], ...] = field(default_factory=tuple)
+    content_bytes: bytes = b""
 
     @property
     def succeeded(self) -> bool:
