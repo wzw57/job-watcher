@@ -103,6 +103,11 @@ python -m job_watcher.cli db-init
 python -m job_watcher.cli crawl-once --limit 20
 ```
 
+每次采集都会写入 `source_runs`，并将最新原始证据写入 `raw_items`，同时保留旧版
+`crawl_snapshots` 兼容链路。运行状态会区分成功、成功但内容未变化、HTTP 错误、
+网络错误、访问阻断、需要浏览器和正文解析失败；无法自动处理的异常会进入
+`review_tasks`，不会显示为“成功无新增”。
+
 本地网络不稳定时可以临时缩短超时：
 
 ```powershell

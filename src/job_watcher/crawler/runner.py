@@ -3,15 +3,17 @@ from __future__ import annotations
 import gzip
 import hashlib
 import html
+import json
 import re
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from job_watcher.collectors import CollectionResult, Collector, HttpCollector
 from job_watcher.config import Settings
 from job_watcher.crawler.keywords import (
     CAMPUS_RECRUITMENT_KEYWORDS,
@@ -38,6 +40,8 @@ class CrawlResult:
     duplicate_snapshots: int
     leads_inserted: int
     errors: int
+    raw_items_new: int
+    reviews_created: int
 
 
 def run_crawl_once(
@@ -46,7 +50,9 @@ def run_crawl_once(
     *,
     limit: int = 20,
     priority_scope: tuple[str, ...] = ("P0", "P1"),
+    collector: Collector | None = None,
 ) -> CrawlResult:
+    collector = collector or HttpCollector(settings)
     sources = select_sources(conn, limit=limit, priority_scope=priority_scope)
     counts = {
         "checked": 0,
@@ -55,11 +61,27 @@ def run_crawl_once(
         "duplicate_snapshots": 0,
         "leads_inserted": 0,
         "errors": 0,
+        "raw_items_new": 0,
+        "reviews_created": 0,
     }
     for source in sources:
         counts["checked"] += 1
+        run_id = start_source_run(conn, int(source["id"]))
+        started = time.monotonic()
         try:
-            fetched = fetch_url(source["url"], settings)
+            result = collector.collect(source["url"])
+            raw_item_id, raw_is_new = save_raw_item(conn, source, result)
+            counts["raw_items_new"] += int(raw_is_new)
+            if not result.succeeded:
+                counts["errors"] += 1
+                created = ensure_collection_review(conn, source, raw_item_id, result)
+                counts["reviews_created"] += int(created)
+                finish_source_run(conn, run_id, result, started, items_seen=1, items_new=int(raw_is_new))
+                mark_source_health(conn, int(source["id"]), result)
+                conn.commit()
+                continue
+            run_result = result if raw_is_new else replace(result, status="no_content_change")
+            fetched = collection_result_dict(result)
             counts["fetched"] += 1
             snapshot_id, inserted = save_snapshot(conn, settings, source, fetched)
             if inserted:
@@ -69,13 +91,89 @@ def run_crawl_once(
                     counts["leads_inserted"] += 1
             else:
                 counts["duplicate_snapshots"] += 1
-            mark_source_checked(conn, int(source["id"]), None)
+            finish_source_run(conn, run_id, run_result, started, items_seen=1, items_new=int(raw_is_new))
+            mark_source_health(conn, int(source["id"]), run_result)
         except Exception as exc:  # noqa: BLE001 - crawler should keep moving across sources.
             counts["errors"] += 1
+            result = CollectionResult("internal_error", source["url"], source["url"], error_type=type(exc).__name__, error_message=str(exc)[:500])
+            finish_source_run(conn, run_id, result, started, items_seen=0, items_new=0)
             mark_source_checked(conn, int(source["id"]), str(exc)[:500])
         conn.commit()
         time.sleep(0.4)
     return CrawlResult(**counts)
+
+
+def collection_result_dict(result: CollectionResult) -> dict[str, Any]:
+    return {"url": result.requested_url, "status_code": result.http_status or 0,
+            "final_url": result.final_url, "content_type": result.content_type,
+            "html": result.html, "title": result.title, "text": result.text,
+            "content_hash": result.content_hash}
+
+
+def start_source_run(conn: sqlite3.Connection, source_id: int) -> int:
+    cur = conn.execute("INSERT INTO source_runs(source_id,status) VALUES (?, 'running')", (source_id,))
+    return int(cur.lastrowid)
+
+
+def finish_source_run(conn: sqlite3.Connection, run_id: int, result: CollectionResult, started: float, *, items_seen: int, items_new: int) -> None:
+    conn.execute(
+        """UPDATE source_runs SET finished_at=CURRENT_TIMESTAMP, status=?, http_status=?,
+           items_seen=?, items_new=?, duration_ms=?, error_type=?, error_message=? WHERE id=?""",
+        (result.status, result.http_status, items_seen, items_new, int((time.monotonic()-started)*1000),
+         result.error_type or None, result.error_message or None, run_id),
+    )
+
+
+def save_raw_item(conn: sqlite3.Connection, source: sqlite3.Row, result: CollectionResult) -> tuple[int, bool]:
+    canonical = result.final_url or result.requested_url
+    existing = conn.execute("SELECT id,content_hash FROM raw_items WHERE source_id=? AND canonical_url=?", (source["id"], canonical)).fetchone()
+    is_new = existing is None or (bool(result.content_hash) and existing["content_hash"] != result.content_hash)
+    crawl_status = "success" if result.succeeded else result.status
+    parse_status = "parsed" if result.succeeded else ("failed" if result.status == "parse_failed" else "pending")
+    url_hash = hashlib.sha256(canonical.encode()).hexdigest()
+    conn.execute(
+        """INSERT INTO raw_items(source_id,entity_hint,title,url,canonical_url,content_text,content_hash,url_hash,
+           crawl_status,parse_status,credibility,merge_status,raw_metadata_json,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,'unprocessed',?,CURRENT_TIMESTAMP)
+           ON CONFLICT(source_id,canonical_url) DO UPDATE SET title=excluded.title,content_text=excluded.content_text,
+           content_hash=excluded.content_hash,crawl_status=excluded.crawl_status,parse_status=excluded.parse_status,
+           raw_metadata_json=excluded.raw_metadata_json,last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP""",
+        (source["id"], source["company_name"], result.title, result.requested_url, canonical, result.text,
+         result.content_hash or None, url_hash, crawl_status, parse_status, int(source["trust_level"] or 50),
+         json.dumps({"http_status":result.http_status,"content_type":result.content_type,"error_type":result.error_type,**dict(result.metadata)}, ensure_ascii=False)),
+    )
+    row = conn.execute("SELECT id FROM raw_items WHERE source_id=? AND canonical_url=?", (source["id"], canonical)).fetchone()
+    return int(row["id"]), is_new
+
+
+def ensure_collection_review(conn: sqlite3.Connection, source: sqlite3.Row, raw_item_id: int, result: CollectionResult) -> bool:
+    if result.status not in {"blocked", "needs_browser", "parse_failed", "http_error", "network_error"}:
+        return False
+    title = f"来源采集异常：{source['name'] or source['url']} [{result.status}]"
+    existing = conn.execute("SELECT id FROM review_tasks WHERE source_id=? AND task_type='collection_failure' AND title=? AND status IN ('pending','in_progress')", (source["id"], title)).fetchone()
+    if existing:
+        return False
+    conn.execute(
+        """INSERT INTO review_tasks(task_type,company_id,source_id,raw_item_id,title,description,suggested_action,priority)
+           VALUES ('collection_failure',?,?,?,?,?,?,?)""",
+        (source["company_id"], source["id"], raw_item_id, title,
+         result.error_message or result.error_type, "切换浏览器采集或人工核验来源", "A" if result.status in {"blocked","needs_browser"} else "B"),
+    )
+    return True
+
+
+def mark_source_health(conn: sqlite3.Connection, source_id: int, result: CollectionResult) -> None:
+    healthy = result.succeeded
+    conn.execute(
+        """UPDATE sources SET last_checked_at=CURRENT_TIMESTAMP,
+           last_verified_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_verified_at END,
+           last_success_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_success_at END,
+           last_content_at=CASE WHEN ? AND ? <> '' THEN CURRENT_TIMESTAMP ELSE last_content_at END,
+           health_status=?, consecutive_failures=CASE WHEN ? THEN 0 ELSE consecutive_failures+1 END,
+           requires_browser=CASE WHEN ?='needs_browser' THEN 1 ELSE requires_browser END,
+           updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+        (healthy,healthy,healthy,result.content_hash,"healthy" if healthy else result.status,healthy,result.status,source_id),
+    )
 
 
 def select_sources(conn: sqlite3.Connection, *, limit: int, priority_scope: tuple[str, ...]) -> list[sqlite3.Row]:

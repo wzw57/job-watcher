@@ -323,7 +323,7 @@ HTTP 失败后可降级为浏览器渲染，再降级为搜索转载，最终生
 验收结果：真实 seed manifest、字段、跨文件 key 和 SHA-256 校验通过；重复导入后仍为
 500 企业、705 总来源；旧数据迁移可重复执行，外键无违规，新旧数据通过 legacy id 可追溯。
 
-### 阶段 B：采集器重构
+### 阶段 B：采集器重构（第一批基础能力已完成）
 
 - 建立统一 Collector 接口；
 - HTTP 采集写入 `source_runs` 和 `raw_items`；
@@ -331,6 +331,10 @@ HTTP 失败后可降级为浏览器渲染，再降级为搜索转载，最终生
 - 处理 PDF、Word、Excel 和图片附件；
 - 保留原始快照；
 - 失败自动生成核验任务。
+
+当前已完成统一 `Collector/CollectionResult` 契约、HTTP Collector、`source_runs` 运行记录、
+`raw_items` 证据写入、内容未变化识别、来源健康更新，以及 blocked/needs_browser/
+parse_failed/http_error/network_error 的人工核验闭环。下一批继续正文质量增强和附件解析。
 
 验收：选取至少 20 个不同类型官方/政府/高校页面，能够区分成功无新增、失败和解析失败，并保留证据。
 
