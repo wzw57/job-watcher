@@ -27,6 +27,13 @@ class Response:
     def geturl(self) -> str: return "https://example.com"
 
 
+class DocumentErrorResponse(Response):
+    status = 404
+    headers = {"Content-Type": "application/pdf"}
+    def read(self, limit: int) -> bytes: return b"not-a-pdf"
+    def geturl(self) -> str: return "https://example.com/missing.pdf"
+
+
 def test_browser_fallback_is_explicit_and_traceable() -> None:
     primary = StaticCollector(CollectionResult("needs_browser", "u", "u"))
     browser = StaticCollector(CollectionResult("success", "u", "u", text="rendered"))
@@ -43,3 +50,11 @@ def test_http_collector_rejects_oversized_response(monkeypatch) -> None:
     monkeypatch.setattr("job_watcher.collectors.http.urlopen", lambda *args, **kwargs: Response())
     result = HttpCollector(settings).collect("https://example.com")
     assert result.status == "too_large" and result.error_type == "response_too_large"
+
+
+def test_document_http_error_is_not_misclassified_as_parse_failure(monkeypatch) -> None:
+    settings = replace(load_settings(), crawler=replace(load_settings().crawler, retry_attempts=1))
+    monkeypatch.setattr("job_watcher.collectors.http.urlopen", lambda *args, **kwargs: DocumentErrorResponse())
+    result = HttpCollector(settings).collect("https://example.com/missing.pdf")
+    assert result.status == "http_error" and result.error_type == "http_404"
+    assert result.content_bytes == b"not-a-pdf"

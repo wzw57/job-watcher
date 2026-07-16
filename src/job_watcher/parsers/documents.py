@@ -12,7 +12,9 @@ SPACE_RE = re.compile(r"[ \t]+")
 
 
 class DocumentParseError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "document_parse_failed") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def parse_document(data: bytes, filename: str, content_type: str = "") -> str:
@@ -26,22 +28,42 @@ def parse_document(data: bytes, filename: str, content_type: str = "") -> str:
             return parse_xlsx(data)
         if suffix == ".csv" or "text/csv" in content_type:
             return parse_csv(data)
+        if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp"} or content_type.lower().startswith("image/"):
+            raise DocumentParseError(
+                "image attachment requires OCR or manual review",
+                code="ocr_required",
+            )
         if suffix in {".doc", ".xls"}:
-            raise DocumentParseError(f"legacy Office format requires conversion: {suffix}")
+            raise DocumentParseError(
+                f"legacy Office format requires conversion before parsing: {suffix}",
+                code="legacy_office_conversion_required",
+            )
     except DocumentParseError:
         raise
     except Exception as exc:  # document parsers must produce a reviewable error.
         raise DocumentParseError(f"failed to parse {suffix or content_type}: {exc}") from exc
-    raise DocumentParseError(f"unsupported document type: {suffix or content_type}")
+    raise DocumentParseError(
+        f"unsupported document type: {suffix or content_type}",
+        code="unsupported_document_type",
+    )
 
 
 def parse_pdf(data: bytes) -> str:
     try:
         from pypdf import PdfReader
     except ModuleNotFoundError as exc:
-        raise DocumentParseError("PDF parser unavailable: install pypdf") from exc
+        raise DocumentParseError(
+            "PDF parser unavailable: install pypdf",
+            code="pdf_parser_unavailable",
+        ) from exc
     reader = PdfReader(io.BytesIO(data))
-    return normalize("\n".join(page.extract_text() or "" for page in reader.pages))
+    text = normalize("\n".join(page.extract_text() or "" for page in reader.pages))
+    if not text:
+        raise DocumentParseError(
+            "PDF contains no extractable text; preserve the file and send it to OCR or manual review",
+            code="ocr_required",
+        )
+    return text
 
 
 def parse_docx(data: bytes) -> str:

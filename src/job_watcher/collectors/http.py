@@ -10,6 +10,7 @@ from job_watcher.collectors.base import CollectionResult
 from job_watcher.config import Settings
 from job_watcher.parsers.documents import DocumentParseError, parse_document
 from job_watcher.parsers.html import ATTACHMENT_EXTENSIONS, discover_attachments, extract_readable_text
+from job_watcher.parsers.quality import assess_content_quality
 
 
 SPACE_RE = re.compile(r"\s+")
@@ -57,26 +58,38 @@ class HttpCollector:
                                     error_message=f"response exceeds {self.settings.crawler.max_response_bytes} bytes",
                                     metadata={"bytes_read": len(raw), "attempts": attempt})
 
+        if is_document(final_url, content_type) and status >= 400:
+            result_status = "blocked" if status in {401, 403, 412, 429} else "http_error"
+            digest = hashlib.sha256(raw).hexdigest()
+            return CollectionResult(
+                result_status, url, final_url, status, content_type,
+                content_hash=digest, error_type=f"http_{status}",
+                error_message=f"document request returned HTTP {status}",
+                metadata={"bytes": len(raw), "document": True, "attempts": attempt},
+                content_bytes=raw,
+            )
+
         if is_document(final_url, content_type):
             digest = hashlib.sha256(raw).hexdigest()
             try:
                 text = parse_document(raw, final_url, content_type)
-                if not text.strip():
-                    raise DocumentParseError("document contains no extractable text; OCR or manual review required")
             except DocumentParseError as exc:
                 return CollectionResult("parse_failed", url, final_url, status, content_type,
-                                        content_hash=digest, error_type="document_parse_failed",
+                                        content_hash=digest, error_type=exc.code,
                                         error_message=str(exc), metadata={"bytes": len(raw), "document": True, "attempts": attempt},
                                         content_bytes=raw)
+            quality = assess_content_quality(text, final_url.rsplit("/", 1)[-1].split("?", 1)[0])
             return CollectionResult("success", url, final_url, status, content_type,
                                     title=final_url.rsplit("/", 1)[-1].split("?", 1)[0], text=text,
-                                    content_hash=digest, metadata={"bytes": len(raw), "document": True, "attempts": attempt},
+                                    content_hash=digest, metadata={"bytes": len(raw), "document": True, "attempts": attempt,
+                                                                   "quality_score": quality.score, "quality_flags": list(quality.flags),
+                                                                   "text_chars": quality.text_chars},
                                     content_bytes=raw)
 
         body = raw.decode(guess_encoding(content_type), errors="replace")
         title, text, extraction = extract_readable_text(body)
         digest = hashlib.sha256(normalize_for_hash(text or body).encode()).hexdigest()
-        if status in {401, 403, 429}:
+        if status in {401, 403, 412, 429}:
             result_status, error_type = "blocked", f"http_{status}"
         elif status >= 400:
             result_status, error_type = "http_error", f"http_{status}"
@@ -86,10 +99,13 @@ class HttpCollector:
             result_status, error_type = "parse_failed", "empty_extracted_text"
         else:
             result_status, error_type = "success", ""
+        quality = assess_content_quality(text, title)
         return CollectionResult(
             result_status, url, final_url, status, content_type, title, text, body, digest,
             error_type, "" if result_status == "success" else f"collection status: {result_status}",
-            {"bytes": len(raw), "attempts": attempt, **extraction}, discover_attachments(body, final_url),
+            {"bytes": len(raw), "attempts": attempt, **extraction, "quality_score": quality.score,
+             "quality_flags": list(quality.flags), "text_chars": quality.text_chars},
+            discover_attachments(body, final_url),
         )
 
 
@@ -114,4 +130,7 @@ def looks_like_js_shell(html_text: str, text: str) -> bool:
 
 def is_document(url: str, content_type: str) -> bool:
     path = url.split("?", 1)[0].lower()
-    return path.endswith(ATTACHMENT_EXTENSIONS) or any(x in content_type.lower() for x in ("application/pdf", "wordprocessingml", "spreadsheetml", "text/csv"))
+    return path.endswith(ATTACHMENT_EXTENSIONS) or any(
+        x in content_type.lower()
+        for x in ("application/pdf", "wordprocessingml", "spreadsheetml", "text/csv", "image/")
+    )

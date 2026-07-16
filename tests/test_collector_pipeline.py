@@ -63,3 +63,29 @@ def test_pipeline_writes_runs_raw_items_and_deduplicates(tmp_path: Path) -> None
     blocked = conn.execute("SELECT health_status,consecutive_failures FROM sources WHERE source_key='blocked'").fetchone()
     assert blocked["health_status"] == "blocked" and blocked["consecutive_failures"] == 2
     assert list(conn.execute("PRAGMA foreign_key_check")) == []
+
+
+def test_low_quality_success_creates_one_idempotent_review(tmp_path: Path) -> None:
+    conn = database()
+    low_quality = CollectionResult(
+        "success", "https://example.com/ok", "https://example.com/ok", 200,
+        "text/html", "", "Loading... 2027届校园招聘", "<div>Loading... 2027届校园招聘</div>", "low-hash",
+        metadata={"quality_score": 5, "quality_flags": ["very_short_text", "placeholder_or_loading_page"]},
+    )
+    blocked = CollectionResult(
+        "blocked", "https://example.com/blocked", "https://example.com/blocked", 403,
+        error_type="http_403",
+    )
+    collector = FakeCollector({
+        "https://example.com/ok": low_quality,
+        "https://example.com/blocked": blocked,
+    })
+    first = run_crawl_once(conn, settings(tmp_path), limit=2, collector=collector)
+    second = run_crawl_once(conn, settings(tmp_path), limit=2, collector=collector)
+    assert first.reviews_created == 2
+    assert second.reviews_created == 0
+    assert conn.execute("SELECT COUNT(*) FROM review_tasks WHERE task_type='content_quality'").fetchone()[0] == 1
+    raw = conn.execute("SELECT parse_status FROM raw_items WHERE canonical_url LIKE '%/ok'").fetchone()
+    assert raw["parse_status"] == "needs_review"
+    assert conn.execute("SELECT COUNT(*) FROM source_runs WHERE error_type='low_content_quality'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM job_leads").fetchone()[0] == 0

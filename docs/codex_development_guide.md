@@ -323,7 +323,7 @@ HTTP 失败后可降级为浏览器渲染，再降级为搜索转载，最终生
 验收结果：真实 seed manifest、字段、跨文件 key 和 SHA-256 校验通过；重复导入后仍为
 500 企业、705 总来源；旧数据迁移可重复执行，外键无违规，新旧数据通过 legacy id 可追溯。
 
-### 阶段 B：采集器重构（第一批基础能力已完成）
+### 阶段 B：采集器重构（基础能力已完成，进入验收）
 
 - 建立统一 Collector 接口；
 - HTTP 采集写入 `source_runs` 和 `raw_items`；
@@ -337,8 +337,10 @@ HTTP 失败后可降级为浏览器渲染，再降级为搜索转载，最终生
 parse_failed/http_error/network_error 的人工核验闭环；同时支持 HTML 附件发现，PDF、DOCX、
 XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_success` 与核验任务表达。
 现已增加 main/article 优先正文抽取、导航噪声过滤、有限重试、响应与附件数量限制、附件
-原文件按哈希持久化、单 URL 诊断命令，以及可选 Playwright 浏览器降级链路。下一步用
-多类真实站点样本完善规则，并实现附件 OCR/旧 Office 转换策略。
+原文件按哈希持久化、单 URL 诊断命令，以及可选 Playwright 浏览器降级链路。固定验收池
+包含 22 个政府、高校、平台、企业和文档样本，可并发运行并输出 JSON 报告；正文质量分
+低于阈值时保留证据并进入人工核验。扫描 PDF 明确标记 `ocr_required`，旧 DOC/XLS 标记
+`legacy_office_conversion_required`，作为后续可选 OCR/格式转换服务的稳定接口。
 
 验收：选取至少 20 个不同类型官方/政府/高校页面，能够区分成功无新增、失败和解析失败，并保留证据。
 
@@ -418,7 +420,7 @@ XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_su
 - 不把与当前任务无关的用户改动纳入提交；
 - PR 描述必须包含变化、原因、影响和验证方法。
 
-当前应继续使用 `agent/v1-data-foundation` 完成阶段 A；阶段 A 合并后再创建采集器重构分支。
+当前草稿 PR 继续承载阶段 A/B 的可审查提交；合并后为阶段 C 创建独立功能分支。
 
 ## 19. Codex 网页版接手提示词
 
@@ -444,8 +446,8 @@ XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_su
 
 ## 20. 最近的下一步
 
-阶段 A 合并后进入阶段 B：先定义统一 Collector 契约，将 HTTP 采集运行记录和原始证据
-稳定写入 `source_runs/raw_items`，再增加正文与附件解析、失败分类和人工核验闭环。
+完成阶段 B 固定样本验收后进入阶段 C：先定义招聘事件字段提取契约和固定公告样本，再实现
+`raw_items -> job_events -> job_positions` 的可追溯解析、企业别名匹配和保守去重。
 
 ---
 

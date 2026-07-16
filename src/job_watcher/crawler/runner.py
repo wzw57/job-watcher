@@ -72,6 +72,9 @@ def run_crawl_once(
             result = collector.collect(source["url"])
             raw_item_id, raw_is_new = save_raw_item(conn, settings, source, result)
             counts["raw_items_new"] += int(raw_is_new)
+            main_low_quality = is_low_content_quality(settings, result)
+            quality_review = ensure_content_quality_review(conn, settings, source, raw_item_id, result)
+            counts["reviews_created"] += int(quality_review)
             if not result.succeeded:
                 counts["errors"] += 1
                 created = ensure_collection_review(conn, source, raw_item_id, result)
@@ -84,6 +87,7 @@ def run_crawl_once(
             items_seen = 1
             items_new = int(raw_is_new)
             attachment_failures = 0
+            low_quality_attachments = 0
             for attachment in result.attachments[:settings.crawler.max_attachments]:
                 attachment_result = collector.collect(attachment["url"])
                 attachment_result = replace(
@@ -94,6 +98,11 @@ def run_crawl_once(
                 items_seen += 1
                 items_new += int(attachment_is_new)
                 counts["raw_items_new"] += int(attachment_is_new)
+                attachment_quality_review = ensure_content_quality_review(
+                    conn, settings, source, attachment_id, attachment_result
+                )
+                counts["reviews_created"] += int(attachment_quality_review)
+                low_quality_attachments += int(is_low_content_quality(settings, attachment_result))
                 if not attachment_result.succeeded:
                     attachment_failures += 1
                     counts["errors"] += 1
@@ -103,13 +112,24 @@ def run_crawl_once(
             snapshot_id, inserted = save_snapshot(conn, settings, source, fetched)
             if inserted:
                 counts["snapshots_inserted"] += 1
-                lead_inserted = maybe_insert_lead(conn, source, snapshot_id, fetched)
-                if lead_inserted:
-                    counts["leads_inserted"] += 1
+                if not main_low_quality:
+                    lead_inserted = maybe_insert_lead(conn, source, snapshot_id, fetched)
+                    if lead_inserted:
+                        counts["leads_inserted"] += 1
             else:
                 counts["duplicate_snapshots"] += 1
-            final_run_result = replace(run_result, status="partial_success", error_type="attachment_failure",
-                                       error_message=f"{attachment_failures} attachment(s) failed") if attachment_failures else run_result
+            if attachment_failures:
+                final_run_result = replace(
+                    run_result, status="partial_success", error_type="attachment_failure",
+                    error_message=f"{attachment_failures} attachment(s) failed",
+                )
+            elif main_low_quality or low_quality_attachments:
+                final_run_result = replace(
+                    run_result, status="partial_success", error_type="low_content_quality",
+                    error_message=f"{int(main_low_quality) + low_quality_attachments} item(s) require content quality review",
+                )
+            else:
+                final_run_result = run_result
             finish_source_run(conn, run_id, final_run_result, started, items_seen=items_seen, items_new=items_new)
             mark_source_health(conn, int(source["id"]), run_result)
         except Exception as exc:  # noqa: BLE001 - crawler should keep moving across sources.
@@ -148,7 +168,13 @@ def save_raw_item(conn: sqlite3.Connection, settings: Settings, source: sqlite3.
     existing = conn.execute("SELECT id,content_hash FROM raw_items WHERE source_id=? AND canonical_url=?", (source["id"], canonical)).fetchone()
     is_new = existing is None or (bool(result.content_hash) and existing["content_hash"] != result.content_hash)
     crawl_status = "success" if result.succeeded else result.status
-    parse_status = "parsed" if result.succeeded else ("failed" if result.status == "parse_failed" else "pending")
+    quality_score = int(result.metadata.get("quality_score", 100))
+    parse_status = (
+        "needs_review" if result.succeeded and quality_score < settings.crawler.content_quality_review_threshold
+        else "parsed" if result.succeeded
+        else "failed" if result.status == "parse_failed"
+        else "pending"
+    )
     url_hash = hashlib.sha256(canonical.encode()).hexdigest()
     stored_path = persist_binary_evidence(settings, int(source["id"]), result) if result.content_bytes else ""
     metadata = {"http_status": result.http_status, "content_type": result.content_type,
@@ -175,7 +201,7 @@ def persist_binary_evidence(settings: Settings, source_id: int, result: Collecti
     directory = settings.paths.snapshots_dir / "attachments" / stamp
     directory.mkdir(parents=True, exist_ok=True)
     suffix = Path(result.final_url.split("?", 1)[0]).suffix.lower()
-    if suffix not in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv"}:
+    if suffix not in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp"}:
         suffix = ".bin"
     digest = result.content_hash or hashlib.sha256(result.content_bytes).hexdigest()
     path = directory / f"source-{source_id}-{digest[:16]}{suffix}"
@@ -198,6 +224,42 @@ def ensure_collection_review(conn: sqlite3.Connection, source: sqlite3.Row, raw_
          result.error_message or result.error_type, "切换浏览器采集或人工核验来源", "A" if result.status in {"blocked","needs_browser"} else "B"),
     )
     return True
+
+
+def ensure_content_quality_review(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    source: sqlite3.Row,
+    raw_item_id: int,
+    result: CollectionResult,
+) -> bool:
+    if not is_low_content_quality(settings, result):
+        return False
+    score = int(result.metadata.get("quality_score", 100))
+    existing = conn.execute(
+        """SELECT id FROM review_tasks
+           WHERE raw_item_id=? AND task_type='content_quality' AND status IN ('pending','in_progress')""",
+        (raw_item_id,),
+    ).fetchone()
+    if existing:
+        return False
+    flags = ", ".join(str(flag) for flag in result.metadata.get("quality_flags", [])) or "unspecified"
+    conn.execute(
+        """INSERT INTO review_tasks(task_type,company_id,source_id,raw_item_id,title,description,suggested_action,priority)
+           VALUES ('content_quality',?,?,?,?,?,?,?)""",
+        (
+            source["company_id"], source["id"], raw_item_id,
+            f"正文质量待核验：{source['name'] or source['url']} [{score}/100]",
+            f"抽取质量分低于 {settings.crawler.content_quality_review_threshold}；标记：{flags}",
+            "检查页面结构、字符编码；如为扫描 PDF，执行 OCR 后重新解析",
+            "B",
+        ),
+    )
+    return True
+
+
+def is_low_content_quality(settings: Settings, result: CollectionResult) -> bool:
+    return result.succeeded and int(result.metadata.get("quality_score", 100)) < settings.crawler.content_quality_review_threshold
 
 
 def mark_source_health(conn: sqlite3.Connection, source_id: int, result: CollectionResult) -> None:

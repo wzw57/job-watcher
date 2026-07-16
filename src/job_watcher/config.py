@@ -45,6 +45,7 @@ class CrawlerConfig:
     max_response_bytes: int = 25 * 1024 * 1024
     max_attachments: int = 10
     browser_fallback_enabled: bool = False
+    content_quality_review_threshold: int = 35
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
             max_response_bytes=int(crawler_raw.get("max_response_bytes", 25 * 1024 * 1024)),
             max_attachments=int(crawler_raw.get("max_attachments", 10)),
             browser_fallback_enabled=bool(crawler_raw.get("browser_fallback_enabled", False)),
+            content_quality_review_threshold=int(crawler_raw.get("content_quality_review_threshold", 35)),
         ),
         search=search,
         web=WebConfig(

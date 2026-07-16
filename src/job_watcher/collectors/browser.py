@@ -5,6 +5,7 @@ import hashlib
 from job_watcher.collectors.base import CollectionResult
 from job_watcher.config import Settings
 from job_watcher.parsers.html import discover_attachments, extract_readable_text
+from job_watcher.parsers.quality import assess_content_quality
 
 
 class BrowserCollector:
@@ -31,9 +32,11 @@ class BrowserCollector:
                 return CollectionResult("parse_failed", url, final_url, response.status if response else None,
                                         "text/html", title=title, html=html, content_hash=digest,
                                         error_type="empty_browser_text", error_message="browser rendered page has no text")
+            quality = assess_content_quality(text, title)
             return CollectionResult("success", url, final_url, response.status if response else None,
                                     "text/html", title, text, html, digest,
-                                    metadata={"collector": "browser", **extraction},
+                                    metadata={"collector": "browser", **extraction, "quality_score": quality.score,
+                                              "quality_flags": list(quality.flags), "text_chars": quality.text_chars},
                                     attachments=discover_attachments(html, final_url))
         except Exception as exc:
             return CollectionResult("browser_error", url, url, error_type=type(exc).__name__, error_message=str(exc)[:500])

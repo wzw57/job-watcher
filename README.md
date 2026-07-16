@@ -124,6 +124,22 @@ PYTHONPATH=src python -m job_watcher.cli collect-url https://example.com/recruit
 PYTHONPATH=src python -m job_watcher.cli collect-url https://example.com/recruit --browser
 ```
 
+固定采集验收池位于 `config/collector_samples.csv`，当前包含 22 个政府、高校、招聘平台、
+企业官网和文档样本。批量验收同样只读，不写数据库；默认输出完整 JSON，`--strict` 会在
+实际状态超出样本允许范围时返回非零退出码：
+
+```bash
+PYTHONPATH=src python -m job_watcher.cli validate-collector-samples --timeout 5
+PYTHONPATH=src python -m job_watcher.cli validate-collector-samples --category document --strict
+PYTHONPATH=src python -m job_watcher.cli validate-collector-samples --output data/collector-validation.json
+```
+
+成功采集结果会写入可解释的正文质量分和质量标记。低于
+`content_quality_review_threshold` 的内容仍保留证据，但 `parse_status` 为 `needs_review`，
+并创建幂等的 `content_quality` 核验任务。扫描型 PDF 使用 `ocr_required` 明确降级；旧版
+DOC/XLS 使用 `legacy_office_conversion_required`；链接型 PNG/JPG/TIFF/WebP 公告也会作为附件
+保存并标记 `ocr_required`。原文件均保留供 OCR、格式转换或人工核验。
+
 本地网络不稳定时可以临时缩短超时：
 
 ```powershell

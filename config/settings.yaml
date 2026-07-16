@@ -26,6 +26,7 @@ crawler:
   max_response_bytes: 26214400
   max_attachments: 10
   browser_fallback_enabled: false
+  content_quality_review_threshold: 35
 
 search:
   default_count: 5

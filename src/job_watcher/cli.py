@@ -58,6 +58,19 @@ def main(argv: list[str] | None = None) -> int:
     collect_url_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
     collect_url_parser.add_argument("--browser", action="store_true", help="Enable Playwright fallback for this check.")
 
+    sample_parser = subparsers.add_parser(
+        "validate-collector-samples",
+        help="Run the read-only collector acceptance pool and print a JSON report.",
+    )
+    sample_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    sample_parser.add_argument("--samples", default="", help="Optional collector sample CSV path.")
+    sample_parser.add_argument("--limit", type=int, default=0, help="Maximum samples; zero means all.")
+    sample_parser.add_argument("--category", default="", help="Only run one sample category.")
+    sample_parser.add_argument("--timeout", type=int, default=0, help="Temporary timeout override in seconds.")
+    sample_parser.add_argument("--browser", action="store_true", help="Enable Playwright fallback.")
+    sample_parser.add_argument("--output", default="", help="Optional JSON report output path.")
+    sample_parser.add_argument("--strict", action="store_true", help="Exit non-zero when a status is unexpected.")
+
     cleanup_parser = subparsers.add_parser(
         "cleanup-weak-leads",
         help="Mark leads without explicit 2027 campus recruitment evidence as invalid.",
@@ -102,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
         return crawl_once(args.settings or None, args.limit, args.timeout or None)
     if args.command == "collect-url":
         return collect_url(args.url, args.settings or None, args.browser)
+    if args.command == "validate-collector-samples":
+        return validate_collector_samples_cmd(
+            args.settings or None, args.samples or None, args.limit, args.category,
+            args.timeout or None, args.browser, args.output or None, args.strict,
+        )
     if args.command == "cleanup-weak-leads":
         return cleanup_weak_leads(args.settings or None)
     if args.command == "generate-search-tasks":
@@ -295,6 +313,45 @@ def collect_url(url: str, settings_path: str | None, browser: bool) -> int:
         "error_message": result.error_message, "metadata": dict(result.metadata),
     }, ensure_ascii=False, indent=2))
     return 0 if result.succeeded else 1
+
+
+def validate_collector_samples_cmd(
+    settings_path: str | None,
+    samples_path: str | None,
+    limit: int,
+    category: str,
+    timeout: int | None,
+    browser: bool,
+    output_path: str | None,
+    strict: bool,
+) -> int:
+    from job_watcher.collectors import build_collector
+    from job_watcher.verification.collector_samples import (
+        load_collector_samples,
+        validate_collector_samples,
+        write_validation_report,
+    )
+
+    settings = load_settings(settings_path)
+    settings = replace(
+        settings,
+        crawler=replace(
+            settings.crawler,
+            timeout_seconds=timeout or settings.crawler.timeout_seconds,
+            retry_attempts=1 if timeout else settings.crawler.retry_attempts,
+            browser_fallback_enabled=browser or settings.crawler.browser_fallback_enabled,
+        ),
+    )
+    sample_file = Path(samples_path) if samples_path else settings.root_dir / "config" / "collector_samples.csv"
+    report = validate_collector_samples(
+        build_collector(settings), load_collector_samples(sample_file), limit=limit, category=category,
+        max_workers=settings.crawler.max_concurrency,
+    )
+    if output_path:
+        write_validation_report(report, Path(output_path))
+        report["output"] = str(Path(output_path))
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 1 if strict and int(report["unexpected"]) else 0
 
 
 def cleanup_weak_leads(settings_path: str | None) -> int:

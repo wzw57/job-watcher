@@ -5,7 +5,10 @@ import re
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 
-ATTACHMENT_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv")
+ATTACHMENT_EXTENSIONS = (
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv",
+    ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp",
+)
 SKIP_TAGS = {"script", "style", "noscript", "svg", "canvas", "nav", "footer", "header", "form"}
 BLOCK_TAGS = {"p", "div", "li", "tr", "br", "h1", "h2", "h3", "h4", "section", "article"}
 
