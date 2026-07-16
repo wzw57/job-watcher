@@ -42,15 +42,19 @@ def settings(tmp_path: Path):
 def test_pipeline_writes_runs_raw_items_and_deduplicates(tmp_path: Path) -> None:
     conn = database()
     result = CollectionResult("success", "https://example.com/ok", "https://example.com/ok", 200,
-                              "text/html", "2027校招", "2027届校园招聘 网络安全", "<html>2027届校园招聘 网络安全</html>", "hash-1")
+                              "text/html", "2027校招", "2027届校园招聘 网络安全", "<html>2027届校园招聘 网络安全</html>", "hash-1",
+                              attachments=({"url":"https://example.com/jobs.xlsx","label":"岗位表","extension":".xlsx"},))
     collector = FakeCollector({"https://example.com/ok": result,
-                               "https://example.com/blocked": CollectionResult("blocked","https://example.com/blocked","https://example.com/blocked",403,error_type="http_403")})
+                               "https://example.com/blocked": CollectionResult("blocked","https://example.com/blocked","https://example.com/blocked",403,error_type="http_403"),
+                               "https://example.com/jobs.xlsx": CollectionResult("success","https://example.com/jobs.xlsx","https://example.com/jobs.xlsx",200,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","jobs.xlsx","网络安全工程师 青岛",content_hash="xlsx-hash")})
     first = run_crawl_once(conn, settings(tmp_path), limit=2, collector=collector)
     second = run_crawl_once(conn, settings(tmp_path), limit=2, collector=collector)
     assert first.checked == second.checked == 2
     assert conn.execute("SELECT COUNT(*) FROM source_runs").fetchone()[0] == 4
     assert conn.execute("SELECT COUNT(*) FROM source_runs WHERE status='no_content_change'").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM raw_items").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM source_runs WHERE items_seen=2").fetchone()[0] == 2
+    assert conn.execute("SELECT content_text FROM raw_items WHERE canonical_url LIKE '%jobs.xlsx'").fetchone()[0] == "网络安全工程师 青岛"
     assert conn.execute("SELECT COUNT(*) FROM crawl_snapshots").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM job_leads").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM review_tasks WHERE task_type='collection_failure'").fetchone()[0] == 1

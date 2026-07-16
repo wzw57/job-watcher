@@ -8,6 +8,8 @@ from urllib.request import Request, urlopen
 
 from job_watcher.collectors.base import CollectionResult
 from job_watcher.config import Settings
+from job_watcher.parsers.documents import DocumentParseError, parse_document
+from job_watcher.parsers.html import ATTACHMENT_EXTENSIONS, discover_attachments
 
 
 TAG_RE = re.compile(r"<[^>]+>")
@@ -41,6 +43,20 @@ class HttpCollector:
         except (URLError, TimeoutError, OSError) as exc:
             return CollectionResult("network_error", url, url, error_type=type(exc).__name__, error_message=str(exc)[:500])
 
+        if is_document(final_url, content_type):
+            digest = hashlib.sha256(raw).hexdigest()
+            try:
+                text = parse_document(raw, final_url, content_type)
+                if not text.strip():
+                    raise DocumentParseError("document contains no extractable text; OCR or manual review required")
+            except DocumentParseError as exc:
+                return CollectionResult("parse_failed", url, final_url, status, content_type,
+                                        content_hash=digest, error_type="document_parse_failed",
+                                        error_message=str(exc), metadata={"bytes": len(raw), "document": True})
+            return CollectionResult("success", url, final_url, status, content_type,
+                                    title=final_url.rsplit("/", 1)[-1].split("?", 1)[0], text=text,
+                                    content_hash=digest, metadata={"bytes": len(raw), "document": True})
+
         body = raw.decode(guess_encoding(content_type), errors="replace")
         title, text = extract_text(body)
         digest = hashlib.sha256(normalize_for_hash(text or body).encode()).hexdigest()
@@ -57,7 +73,7 @@ class HttpCollector:
         return CollectionResult(
             result_status, url, final_url, status, content_type, title, text, body, digest,
             error_type, "" if result_status == "success" else f"collection status: {result_status}",
-            {"bytes": len(raw)},
+            {"bytes": len(raw)}, discover_attachments(body, final_url),
         )
 
 
@@ -81,3 +97,8 @@ def normalize_for_hash(text: str) -> str:
 def looks_like_js_shell(html_text: str, text: str) -> bool:
     lower = html_text.lower()
     return len(text) < 120 and any(marker in lower for marker in JS_SHELL_MARKERS)
+
+
+def is_document(url: str, content_type: str) -> bool:
+    path = url.split("?", 1)[0].lower()
+    return path.endswith(ATTACHMENT_EXTENSIONS) or any(x in content_type.lower() for x in ("application/pdf", "wordprocessingml", "spreadsheetml", "text/csv"))

@@ -81,6 +81,23 @@ def run_crawl_once(
                 conn.commit()
                 continue
             run_result = result if raw_is_new else replace(result, status="no_content_change")
+            items_seen = 1
+            items_new = int(raw_is_new)
+            attachment_failures = 0
+            for attachment in result.attachments[:10]:
+                attachment_result = collector.collect(attachment["url"])
+                attachment_result = replace(
+                    attachment_result,
+                    metadata={**dict(attachment_result.metadata), "parent_url": result.final_url, "link_label": attachment.get("label", "")},
+                )
+                attachment_id, attachment_is_new = save_raw_item(conn, source, attachment_result)
+                items_seen += 1
+                items_new += int(attachment_is_new)
+                counts["raw_items_new"] += int(attachment_is_new)
+                if not attachment_result.succeeded:
+                    attachment_failures += 1
+                    counts["errors"] += 1
+                    counts["reviews_created"] += int(ensure_collection_review(conn, source, attachment_id, attachment_result))
             fetched = collection_result_dict(result)
             counts["fetched"] += 1
             snapshot_id, inserted = save_snapshot(conn, settings, source, fetched)
@@ -91,7 +108,9 @@ def run_crawl_once(
                     counts["leads_inserted"] += 1
             else:
                 counts["duplicate_snapshots"] += 1
-            finish_source_run(conn, run_id, run_result, started, items_seen=1, items_new=int(raw_is_new))
+            final_run_result = replace(run_result, status="partial_success", error_type="attachment_failure",
+                                       error_message=f"{attachment_failures} attachment(s) failed") if attachment_failures else run_result
+            finish_source_run(conn, run_id, final_run_result, started, items_seen=items_seen, items_new=items_new)
             mark_source_health(conn, int(source["id"]), run_result)
         except Exception as exc:  # noqa: BLE001 - crawler should keep moving across sources.
             counts["errors"] += 1
@@ -132,14 +151,14 @@ def save_raw_item(conn: sqlite3.Connection, source: sqlite3.Row, result: Collect
     parse_status = "parsed" if result.succeeded else ("failed" if result.status == "parse_failed" else "pending")
     url_hash = hashlib.sha256(canonical.encode()).hexdigest()
     conn.execute(
-        """INSERT INTO raw_items(source_id,entity_hint,title,url,canonical_url,content_text,content_hash,url_hash,
+        """INSERT INTO raw_items(source_id,entity_hint,title,url,canonical_url,content_text,attachments_json,content_hash,url_hash,
            crawl_status,parse_status,credibility,merge_status,raw_metadata_json,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,'unprocessed',?,CURRENT_TIMESTAMP)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'unprocessed',?,CURRENT_TIMESTAMP)
            ON CONFLICT(source_id,canonical_url) DO UPDATE SET title=excluded.title,content_text=excluded.content_text,
-           content_hash=excluded.content_hash,crawl_status=excluded.crawl_status,parse_status=excluded.parse_status,
+           attachments_json=excluded.attachments_json,content_hash=excluded.content_hash,crawl_status=excluded.crawl_status,parse_status=excluded.parse_status,
            raw_metadata_json=excluded.raw_metadata_json,last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP""",
         (source["id"], source["company_name"], result.title, result.requested_url, canonical, result.text,
-         result.content_hash or None, url_hash, crawl_status, parse_status, int(source["trust_level"] or 50),
+         json.dumps(list(result.attachments), ensure_ascii=False), result.content_hash or None, url_hash, crawl_status, parse_status, int(source["trust_level"] or 50),
          json.dumps({"http_status":result.http_status,"content_type":result.content_type,"error_type":result.error_type,**dict(result.metadata)}, ensure_ascii=False)),
     )
     row = conn.execute("SELECT id FROM raw_items WHERE source_id=? AND canonical_url=?", (source["id"], canonical)).fetchone()

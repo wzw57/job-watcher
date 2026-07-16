@@ -334,7 +334,9 @@ HTTP 失败后可降级为浏览器渲染，再降级为搜索转载，最终生
 
 当前已完成统一 `Collector/CollectionResult` 契约、HTTP Collector、`source_runs` 运行记录、
 `raw_items` 证据写入、内容未变化识别、来源健康更新，以及 blocked/needs_browser/
-parse_failed/http_error/network_error 的人工核验闭环。下一批继续正文质量增强和附件解析。
+parse_failed/http_error/network_error 的人工核验闭环；同时支持 HTML 附件发现，PDF、DOCX、
+XLSX、CSV 文本提取和附件级 `raw_items`，附件失败使用 `partial_success` 与核验任务表达。
+下一批继续正文质量增强、附件持久化和更多真实站点样本。
 
 验收：选取至少 20 个不同类型官方/政府/高校页面，能够区分成功无新增、失败和解析失败，并保留证据。
 

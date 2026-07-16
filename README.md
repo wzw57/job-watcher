@@ -108,6 +108,10 @@ python -m job_watcher.cli crawl-once --limit 20
 网络错误、访问阻断、需要浏览器和正文解析失败；无法自动处理的异常会进入
 `review_tasks`，不会显示为“成功无新增”。
 
+HTML 公告会自动发现 PDF、DOC/DOCX、XLS/XLSX 和 CSV 附件。PDF、DOCX、XLSX、CSV
+可提取文本并作为独立 `raw_items` 证据保存；旧版 DOC/XLS 或解析失败的附件进入人工核验，
+主页面仍记录为成功但本次运行标记为 `partial_success`。
+
 本地网络不稳定时可以临时缩短超时：
 
 ```powershell
