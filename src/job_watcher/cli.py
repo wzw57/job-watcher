@@ -22,6 +22,14 @@ def main(argv: list[str] | None = None) -> int:
 
     import_parser = subparsers.add_parser("import-seed", help="Import cleaned seed data into SQLite.")
     import_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    import_parser.add_argument("--seed-dir", default="", help="Directory containing seed CSVs and manifest.")
+
+    doctor_parser = subparsers.add_parser("seed-data-doctor", help="Validate seed files, row counts, keys, and SHA-256.")
+    doctor_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
+    doctor_parser.add_argument("--seed-dir", default="", help="Directory containing seed CSVs and manifest.")
+
+    migrate_parser = subparsers.add_parser("migrate-legacy-leads", help="Migrate legacy snapshots and leads into the V1 evidence chain.")
+    migrate_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
 
     candidate_parser = subparsers.add_parser("import-candidates", help="Import correction candidates into SQLite.")
     candidate_parser.add_argument("--settings", default="", help="Optional settings YAML path.")
@@ -72,7 +80,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "db-init":
         return db_init(args.settings or None)
     if args.command == "import-seed":
-        return import_seed(args.settings or None)
+        return import_seed(args.settings or None, args.seed_dir or None)
+    if args.command == "seed-data-doctor":
+        return seed_data_doctor(args.settings or None, args.seed_dir or None)
+    if args.command == "migrate-legacy-leads":
+        return migrate_legacy_leads(args.settings or None)
     if args.command == "import-candidates":
         return import_candidates(args.settings or None)
     if args.command == "web":
@@ -137,13 +149,43 @@ def db_init(settings_path: str | None) -> int:
     return 0
 
 
-def import_seed(settings_path: str | None) -> int:
+def import_seed(settings_path: str | None, seed_dir: str | None = None) -> int:
     from job_watcher.importers.seed_importer import import_all_seed_data
 
     settings = load_settings(settings_path)
-    result = import_all_seed_data(settings)
+    result = import_all_seed_data(settings, Path(seed_dir) if seed_dir else None)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"database: {settings.paths.database_path}")
+    return 0
+
+
+def seed_data_doctor(settings_path: str | None, seed_dir: str | None = None) -> int:
+    from job_watcher.importers.seed_data import validate_seed_data
+
+    settings = load_settings(settings_path)
+    directory = Path(seed_dir) if seed_dir else settings.paths.data_dir / "processed"
+    result = validate_seed_data(directory)
+    print(json.dumps({
+        "seed_dir": str(result.seed_dir), "companies": result.company_count,
+        "sources": result.source_count, "manifest_version": result.manifest_version,
+        "sha256": result.sha256,
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def migrate_legacy_leads(settings_path: str | None) -> int:
+    from job_watcher.storage.db import connect, init_db
+    from job_watcher.storage.legacy_migration import migrate_legacy_data
+
+    settings = load_settings(settings_path)
+    init_db(settings)
+    with connect(settings) as conn:
+        before = {name: conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0] for name in ("companies", "sources")}
+        result = migrate_legacy_data(conn)
+        after = {name: conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0] for name in ("companies", "sources")}
+    if any(after[k] < before[k] for k in before):
+        raise RuntimeError(f"legacy migration reduced seed data counts: before={before}, after={after}")
+    print(json.dumps({**result, "before": before, "after": after}, ensure_ascii=False, indent=2))
     return 0
 
 

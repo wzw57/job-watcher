@@ -9,9 +9,13 @@ from typing import Any
 from job_watcher.config import Settings
 
 
-def import_all_seed_data(settings: Settings) -> dict[str, int]:
-    companies_path = settings.paths.data_dir / "processed" / "companies_seed.csv"
-    sources_path = settings.paths.data_dir / "processed" / "company_sources_seed.csv"
+def import_all_seed_data(settings: Settings, seed_dir: Path | None = None) -> dict[str, int]:
+    from job_watcher.importers.seed_data import validate_seed_data
+
+    seed_dir = seed_dir or settings.paths.data_dir / "processed"
+    validate_seed_data(seed_dir)
+    companies_path = seed_dir / "companies_seed.csv"
+    sources_path = seed_dir / "company_sources_seed.csv"
     fixed_sources_path = settings.root_dir / "config" / "sources.yaml"
 
     from job_watcher.storage.db import connect, init_db

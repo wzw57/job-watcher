@@ -31,7 +31,9 @@ python -m job_watcher.cli config-check
 ```powershell
 $env:PYTHONPATH="E:\job_watcher\src"
 python -m job_watcher.cli db-init
+python -m job_watcher.cli seed-data-doctor
 python -m job_watcher.cli import-seed
+python -m job_watcher.cli migrate-legacy-leads
 ```
 
 当前导入结果：
@@ -41,6 +43,10 @@ python -m job_watcher.cli import-seed
   - 表格拆分来源：690 条
   - 固定公共源：15 条
 - P0/P1 企业：215 条
+
+`seed-data-doctor` 会校验必需字段、重复 `company_key`、跨文件关联、manifest 数量和 SHA-256。
+`import-seed` 可重复执行；`migrate-legacy-leads` 非破坏性保留旧表，并建立
+`sources -> raw_items -> job_events -> job_positions` 可追溯链路。
 
 ## 启动本地 Web 看板
 

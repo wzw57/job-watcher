@@ -51,3 +51,9 @@ def test_old_database_gets_non_destructive_columns() -> None:
     assert "monitor_status" in column_names(conn, "companies")
     assert "health_status" in column_names(conn, "sources")
     assert "task_type" in column_names(conn, "search_tasks")
+
+
+def test_column_migrations_skip_missing_tables() -> None:
+    conn = sqlite3.connect(":memory:")
+    execute_column_migrations(conn, COLUMN_MIGRATIONS)
+    assert table_names(conn) == set()

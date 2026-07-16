@@ -226,6 +226,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         job_event_id INTEGER REFERENCES job_events(id),
         merge_status TEXT NOT NULL DEFAULT 'unprocessed',
         raw_metadata_json TEXT,
+        legacy_snapshot_id INTEGER,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(source_id, canonical_url)
@@ -260,6 +261,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         last_verified_at TEXT,
         manual_tags_json TEXT,
         notes TEXT,
+        legacy_lead_id INTEGER,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -279,6 +281,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         requirements TEXT,
         match_score INTEGER NOT NULL DEFAULT 0,
         match_reasons_json TEXT,
+        legacy_lead_id INTEGER,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -382,6 +385,9 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)",
     "CREATE INDEX IF NOT EXISTS idx_review_tasks_status ON review_tasks(status, priority)",
     "CREATE INDEX IF NOT EXISTS idx_source_runs_source ON source_runs(source_id, started_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_items_legacy_snapshot ON raw_items(legacy_snapshot_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_events_legacy_lead ON job_events(legacy_lead_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_positions_legacy_lead ON job_positions(legacy_lead_id)",
 )
 
 
@@ -430,6 +436,15 @@ COLUMN_MIGRATIONS: dict[str, tuple[str, ...]] = {
         "failure_count INTEGER NOT NULL DEFAULT 0",
         "enabled INTEGER NOT NULL DEFAULT 1",
     ),
+    "raw_items": (
+        "legacy_snapshot_id INTEGER",
+    ),
+    "job_events": (
+        "legacy_lead_id INTEGER",
+    ),
+    "job_positions": (
+        "legacy_lead_id INTEGER",
+    ),
 }
 
 
@@ -444,8 +459,11 @@ def connect(settings: Settings) -> sqlite3.Connection:
 
 def init_db(settings: Settings) -> None:
     with connect(settings) as conn:
-        execute_schema(conn, SCHEMA_STATEMENTS)
+        table_statements = tuple(s for s in SCHEMA_STATEMENTS if not s.lstrip().upper().startswith("CREATE INDEX"))
+        index_statements = tuple(s for s in SCHEMA_STATEMENTS if s.lstrip().upper().startswith("CREATE INDEX"))
+        execute_schema(conn, table_statements)
         execute_column_migrations(conn, COLUMN_MIGRATIONS)
+        execute_schema(conn, index_statements)
 
 
 def execute_schema(conn: sqlite3.Connection, statements: Iterable[str]) -> None:
@@ -462,6 +480,11 @@ def execute_column_migrations(conn: sqlite3.Connection, migrations: dict[str, tu
     company, source, search and lead records.
     """
     for table, definitions in migrations.items():
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        if table_exists is None:
+            continue
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
         for definition in definitions:
             column_name = definition.split(maxsplit=1)[0]
