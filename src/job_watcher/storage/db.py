@@ -202,6 +202,166 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         UNIQUE(company_name, evidence_url)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS raw_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER REFERENCES sources(id),
+        search_task_id INTEGER REFERENCES search_tasks(id),
+        entity_hint TEXT,
+        title TEXT,
+        url TEXT NOT NULL,
+        canonical_url TEXT,
+        published_at_raw TEXT,
+        published_at TEXT,
+        discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        content_text TEXT,
+        content_html_path TEXT,
+        attachments_json TEXT,
+        content_hash TEXT,
+        url_hash TEXT,
+        crawl_status TEXT NOT NULL DEFAULT 'pending',
+        parse_status TEXT NOT NULL DEFAULT 'pending',
+        credibility INTEGER NOT NULL DEFAULT 50,
+        job_event_id INTEGER REFERENCES job_events(id),
+        merge_status TEXT NOT NULL DEFAULT 'unprocessed',
+        raw_metadata_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(source_id, canonical_url)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS job_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_id INTEGER REFERENCES companies(id),
+        publisher_entity_id INTEGER REFERENCES companies(id),
+        employer_entity_id INTEGER REFERENCES companies(id),
+        contract_entity_id INTEGER REFERENCES companies(id),
+        title TEXT NOT NULL,
+        recruitment_type TEXT NOT NULL DEFAULT 'unknown',
+        cohorts_json TEXT,
+        locations_json TEXT,
+        qingdao_level TEXT NOT NULL DEFAULT 'pending',
+        degree_requirements_json TEXT,
+        major_requirements_json TEXT,
+        political_requirement TEXT,
+        headcount INTEGER,
+        published_at TEXT,
+        deadline_at TEXT,
+        application_url TEXT,
+        employment_type TEXT NOT NULL DEFAULT 'unknown',
+        source_confidence INTEGER NOT NULL DEFAULT 0,
+        match_score INTEGER NOT NULL DEFAULT 0,
+        match_level TEXT NOT NULL DEFAULT 'pending',
+        match_reasons_json TEXT,
+        status TEXT NOT NULL DEFAULT 'pending_review',
+        first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_verified_at TEXT,
+        manual_tags_json TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS job_positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_event_id INTEGER NOT NULL REFERENCES job_events(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        category TEXT,
+        location TEXT,
+        department TEXT,
+        headcount INTEGER,
+        degree TEXT,
+        majors_json TEXT,
+        description TEXT,
+        requirements TEXT,
+        match_score INTEGER NOT NULL DEFAULT 0,
+        match_reasons_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS applications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_event_id INTEGER NOT NULL REFERENCES job_events(id) ON DELETE CASCADE,
+        position_id INTEGER REFERENCES job_positions(id) ON DELETE SET NULL,
+        company_id INTEGER REFERENCES companies(id),
+        status TEXT NOT NULL DEFAULT 'undecided',
+        priority TEXT NOT NULL DEFAULT 'B',
+        resume_version TEXT,
+        applied_at TEXT,
+        channel TEXT,
+        account_hint TEXT,
+        next_action TEXT,
+        next_action_at TEXT,
+        written_test_at TEXT,
+        interview_at TEXT,
+        result TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(job_event_id, position_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS review_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_type TEXT NOT NULL,
+        company_id INTEGER REFERENCES companies(id),
+        source_id INTEGER REFERENCES sources(id),
+        raw_item_id INTEGER REFERENCES raw_items(id),
+        job_event_id INTEGER REFERENCES job_events(id),
+        title TEXT NOT NULL,
+        description TEXT,
+        suggested_action TEXT,
+        priority TEXT NOT NULL DEFAULT 'B',
+        status TEXT NOT NULL DEFAULT 'pending',
+        resolution TEXT,
+        due_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        finished_at TEXT,
+        status TEXT NOT NULL DEFAULT 'running',
+        http_status INTEGER,
+        items_seen INTEGER NOT NULL DEFAULT 0,
+        items_new INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER,
+        error_type TEXT,
+        error_message TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS change_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_event_id INTEGER REFERENCES job_events(id) ON DELETE CASCADE,
+        raw_item_id INTEGER REFERENCES raw_items(id) ON DELETE CASCADE,
+        field_name TEXT NOT NULL,
+        old_value TEXT,
+        new_value TEXT,
+        detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        acknowledged_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS daily_briefs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        brief_date TEXT NOT NULL UNIQUE,
+        summary TEXT,
+        content_json TEXT NOT NULL,
+        generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_companies_priority ON companies(priority)",
     "CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(verification_status)",
     "CREATE INDEX IF NOT EXISTS idx_sources_company ON sources(company_id)",
@@ -213,7 +373,64 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_search_tasks_status ON search_tasks(status)",
     "CREATE INDEX IF NOT EXISTS idx_search_sources_tier ON search_sources(tier)",
     "CREATE INDEX IF NOT EXISTS idx_discovered_companies_status ON discovered_companies(review_status)",
+    "CREATE INDEX IF NOT EXISTS idx_raw_items_merge_status ON raw_items(merge_status)",
+    "CREATE INDEX IF NOT EXISTS idx_raw_items_url_hash ON raw_items(url_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_job_events_entity ON job_events(entity_id)",
+    "CREATE INDEX IF NOT EXISTS idx_job_events_status ON job_events(status)",
+    "CREATE INDEX IF NOT EXISTS idx_job_events_deadline ON job_events(deadline_at)",
+    "CREATE INDEX IF NOT EXISTS idx_job_positions_event ON job_positions(job_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)",
+    "CREATE INDEX IF NOT EXISTS idx_review_tasks_status ON review_tasks(status, priority)",
+    "CREATE INDEX IF NOT EXISTS idx_source_runs_source ON source_runs(source_id, started_at)",
 )
+
+
+COLUMN_MIGRATIONS: dict[str, tuple[str, ...]] = {
+    "companies": (
+        "parent_id INTEGER REFERENCES companies(id)",
+        "root_group_id INTEGER REFERENCES companies(id)",
+        "short_name TEXT",
+        "industry TEXT",
+        "district TEXT",
+        "qingdao_relation TEXT NOT NULL DEFAULT 'pending'",
+        "credit_code TEXT",
+        "official_domain TEXT",
+        "monitor_status TEXT NOT NULL DEFAULT 'uncovered'",
+        "job_value INTEGER NOT NULL DEFAULT 0",
+        "tech_friendliness INTEGER NOT NULL DEFAULT 0",
+        "evidence_level TEXT NOT NULL DEFAULT 'unverified'",
+        "evidence_url TEXT",
+    ),
+    "sources": (
+        "source_level TEXT NOT NULL DEFAULT 'unknown'",
+        "domain TEXT",
+        "account_name TEXT",
+        "account_id TEXT",
+        "auth_subject TEXT",
+        "monitor_method TEXT NOT NULL DEFAULT 'http'",
+        "content_type TEXT NOT NULL DEFAULT 'unknown'",
+        "schedule TEXT",
+        "active_season_json TEXT",
+        "health_status TEXT NOT NULL DEFAULT 'unknown'",
+        "last_success_at TEXT",
+        "last_content_at TEXT",
+        "consecutive_failures INTEGER NOT NULL DEFAULT 0",
+        "parser_name TEXT",
+    ),
+    "search_tasks": (
+        "task_type TEXT NOT NULL DEFAULT 'job_discovery'",
+        "query_template TEXT",
+        "site_filter TEXT",
+        "priority TEXT NOT NULL DEFAULT 'B'",
+        "schedule TEXT",
+        "time_range_days INTEGER",
+        "next_run_at TEXT",
+        "last_result_count INTEGER NOT NULL DEFAULT 0",
+        "new_result_count INTEGER NOT NULL DEFAULT 0",
+        "failure_count INTEGER NOT NULL DEFAULT 0",
+        "enabled INTEGER NOT NULL DEFAULT 1",
+    ),
+}
 
 
 def connect(settings: Settings) -> sqlite3.Connection:
@@ -228,9 +445,27 @@ def connect(settings: Settings) -> sqlite3.Connection:
 def init_db(settings: Settings) -> None:
     with connect(settings) as conn:
         execute_schema(conn, SCHEMA_STATEMENTS)
+        execute_column_migrations(conn, COLUMN_MIGRATIONS)
 
 
 def execute_schema(conn: sqlite3.Connection, statements: Iterable[str]) -> None:
     for statement in statements:
         conn.execute(statement)
+    conn.commit()
+
+
+def execute_column_migrations(conn: sqlite3.Connection, migrations: dict[str, tuple[str, ...]]) -> None:
+    """Add compatible columns to databases created by pre-V1 versions.
+
+    SQLite has no portable ``ADD COLUMN IF NOT EXISTS``. Inspecting table
+    metadata keeps startup migrations idempotent while preserving all existing
+    company, source, search and lead records.
+    """
+    for table, definitions in migrations.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for definition in definitions:
+            column_name = definition.split(maxsplit=1)[0]
+            if column_name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+                existing.add(column_name)
     conn.commit()
