@@ -138,6 +138,20 @@ Provider：
 
 - SQLite
 
+核心事实表（V1 数据底座）：
+
+- `companies`：企业、事业单位、分支机构及集团层级。
+- `sources`：官网、公众号、公共平台、社区和搜索引擎渠道。
+- `search_tasks`：主动搜索与新主体/新渠道发现任务。
+- `raw_items`：逐来源保存的原始采集证据。
+- `job_events`：多来源归并后的招聘事件。
+- `job_positions`：招聘事件中的具体岗位。
+- `applications`：个人投递流程。
+- `review_tasks`：所有无法自动确认的问题。
+
+旧表 `crawl_snapshots`、`job_leads` 和 `correction_candidates` 在迁移期保留，
+后续通过归并任务逐步写入新的事实表，不进行破坏性删除。
+
 后续可迁移：
 
 - PostgreSQL
@@ -505,4 +519,3 @@ VPS 约束：
 - 飞书推送。
 - 邮箱/日程。
 - 大模型助手。
-
